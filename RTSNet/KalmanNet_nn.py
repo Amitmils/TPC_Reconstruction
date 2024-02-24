@@ -138,7 +138,7 @@ class KalmanNetNN(torch.nn.Module):
         # Predict the 1-st moment of x
         self.m1x_prior = self.f(self.m1x_posterior)
 
-        # Predict the 1-st moment of y
+        # Predict the 1-st moment of y  
         self.m1y = self.h(self.m1x_prior)
 
     ##############################

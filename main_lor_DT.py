@@ -74,7 +74,7 @@ if sim_case == 'data size':
    args.N_E = 2
    args.N_CV = 2
    args.N_T = 10
-   args.T = 100
+   args.T = 20
    args.T_test = 1000
    DatafolderName = 'Simulations/Lorenz_Atractor/data/data_size' + '/'
    dataFileName = ['rq1030_size2.pt','rq1030_size10.pt','rq1030_size100.pt','rq1030_size1000.pt']
