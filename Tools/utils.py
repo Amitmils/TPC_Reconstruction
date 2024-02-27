@@ -2,6 +2,8 @@ import numpy as np
 import numpy as np
 from scipy.interpolate import splrep, splev
 import matplotlib.pyplot as plt
+import pandas as pd
+import os
 
 Q_ELECTRON = 1.6022*10e-19
 M_ELECTRON = 1.6726*10e-27
@@ -10,7 +12,7 @@ E = np.cos((Q_ELECTRON*B)/M_ELECTRON) * 500 #Applied Electric Field (V/m)
 
 
 class Traj_Generator():
-    def __init__(self,traj_length = 1000) -> None:
+    def __init__(self,init_x,init_y,init_z,init_vx,init_vy,init_vz,traj_length = 1000) -> None:
         self.traj_length = traj_length
         self.x = np.zeros((self.traj_length ,1))
         self.y = np.zeros((self.traj_length ,1))
@@ -21,24 +23,28 @@ class Traj_Generator():
         self.t = np.zeros((self.traj_length ,1))
         self.energy = np.zeros((self.traj_length ,1))
         self.delta_t = 10e-10 #step size in seconds
-        self.set_init_values()
+        self.set_init_values(init_x,init_y,init_z,init_vx,init_vy,init_vz)
 
-    def set_init_values(self):
-        self.vx[0] = 10e6
-        self.vz[0] = 10e6
-        self.vy[0] = 10e6
+    def set_init_values(self,init_x,init_y,init_z,init_vx,init_vy,init_vz):
+        self.x[0]  = init_x
+        self.y[0]  = init_y
+        self.z[0]  = init_z
+        self.vx[0] = init_vx
+        self.vz[0] = init_vy
+        self.vy[0] = init_vz
 
     def get_energy(self,vx,vy,vz):
+        #returns kinetic energy
         c = 3*10e8
         velocity = np.sqrt(vx**2 + vy**2 + vz**2)
         bet = velocity / c
-        gamma = np.sqrt(1/(1-bet**2))
+        gamma = np.sqrt(1/(1-bet**2)) 
         energy = (gamma - 1) * 931.494028
         return energy
 
     def get_stopping_power(self,energy_interp):
         gasMediumDensity = 8.988e-5 #g/cm3 at 1 bar
-        data = np.loadtxt("TPC_Reconstruction/Tools/stpHydrogen.txt")
+        data = np.loadtxt("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Tools/stpHydrogen.txt")
         energy = data[:, 0]  # First column
         stopping_power = data[:, 1]  # Second column
         tck = splrep(energy, stopping_power)
@@ -122,28 +128,51 @@ class Traj_Generator():
             self.energy[i] = self.get_energy(self.vx[i],self.vy[i],self.vz[i])
             i+=1
         self.energy[i] = self.get_energy(self.vx[i],self.vy[i],self.vz[i])
+        self.t[i] = i * self.delta_t
 
-        state_vector_matrix = np.vstack((self.x.T, self.y.T, self.z.T, self.vx.T, self.vy.T,self.vz.T))
-        return state_vector_matrix
+        traj_data = {
+            "t" : self.t,
+            "x" : self.x,
+            "y" : self.y,
+            "z" : self.z,
+            "vx" : self.vx,
+            "vy" : self.vy,
+            "vz" : self.vz,
+            "energy" : self.energy,
+        }
+        return traj_data
+
+    def plot_graphs(self,traj_data):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot3D(traj_data['x'], traj_data['y'], traj_data['z'], 'gray')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title('3D Trajectory')
+        fig, axs = plt.subplots(2)  # 2 rows of subplots
+        axs[0].plot(traj_data['vx'],label='x velocity')
+        axs[0].plot(traj_data['vy'],label='y velocity')
+        axs[0].plot(traj_data['vz'],label='z velocity')
+        axs[0].set_title('Velocities Over Time')
+        axs[0].set_ylabel('Velocity [m/s]')
+        axs[0].set_xticks([])
+        axs[0].legend()
+        axs[1].plot(traj_data['t'],traj_data['energy'].flatten(),label='Energy')
+        axs[1].set_title('Kinetic Energy Over Time')
+        axs[1].set_xlabel('Time [s]')
+        axs[1].set_ylabel('Energy [MeV]')
+        axs[1].legend()
+        plt.show()
+
+    def save_csv(self,traj_data,path = os.path.join(os.path.dirname(__file__),"generated_trajectory.csv")):
+        pd.DataFrame(np.transpose(traj_data)).to_csv(path,index=False)
 
 
 
-gen = Traj_Generator()
-a = gen.generate()
-fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.plot3D(a[0,:], a[1,:], a[2,:], 'gray')
-ax.set_xlabel('X')
-ax.set_ylabel('Y')
-ax.set_zlabel('Z')
-ax.set_title('3D Trajectory')
-plt.figure()
-plt.plot(a[3,:],label='x velocity')
-plt.plot(a[4,:],label='y velocity')
-plt.plot(a[5,:],label='z velocity')
-plt.legend()
-plt.figure()
-plt.plot(gen.energy,label='Energy')
-plt.legend()
-plt.show()
-b=1
+
+
+gen = Traj_Generator(init_x = 0,init_y = 0,init_z = 0,init_vx = 10e6,init_vy = 10e6,init_vz = 10e6)
+traj_data = gen.generate()
+gen.plot_graphs(traj_data)
+gen.save_csv(traj_data)
