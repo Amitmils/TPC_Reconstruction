@@ -48,6 +48,7 @@ B = 2.85 #Applied Magnetic Field (T)
 E = torch.cos((Q_PROTON*B)/MASS_PROTON_KG) * 500 #Applied Electric Field (V/m)
 ATOMIC_NUMBER = 1
 C = 3*1e8
+CHAMBER_RADIUS  = 25 #cm
 
 
 
@@ -63,26 +64,30 @@ class CONFIG():
         return data
 
 class Trajectory():
-    def __init__(self,real_traj_data,observation_data=None,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,momentum_ss=False,init_energy=None,init_teta=None,init_phi=None) -> None:
+    def __init__(self,real_traj_data,observation_data=None,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,momentum_ss=False,init_energy=None,init_teta=None,init_phi=None,delta_t=None) -> None:
         assert not(momentum_ss), "No support for momentum SS Yet!"
+        assert delta_t is not None or len(real_traj_data['t']) > 0, "delta_t or time stamps are needed for propagation function!"
+
         self.data_src = data_source
         self.init_energy = init_energy
         self.init_teta = init_teta
         self.init_phi = init_phi
         self.t = real_traj_data['t'] if 't' in real_traj_data else torch.tensor([])
+        self.delta_t = delta_t if delta_t is not None else self.t[1]-self.t[0]
         self.momentum_ss = momentum_ss
-        self.traj_length = len(self.t)
         self.real_energy = real_traj_data['energy'] if 'energy' in real_traj_data else torch.tensor([])
         if momentum_ss:
-            self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['px'],real_traj_data['py'],real_traj_data['pz']),dim=1)
+            self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['px'],real_traj_data['py'],real_traj_data['pz']),dim=1).T
         else:
-            self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['vx'],real_traj_data['vy'],real_traj_data['vz']),dim=1)
+            self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['vx'],real_traj_data['vy'],real_traj_data['vz']),dim=1).T
         if observation_data is not None:
-            self.y = torch.cat(observation_data['x'],observation_data['y'],observation_data['z'],dim=1)
+            self.y = torch.cat(observation_data['x'],observation_data['y'],observation_data['z'],dim=1).T
         else:
             #TODO add noise
             noise = 0
-            self.y = self.x_real[:,[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value]] + noise
+            self.y = self.x_real[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:] + noise
+
+        self.traj_length = self.x_real.shape[1]
 
         self.x_estimated_FW = torch.zeros_like(self.x_real)
         self.x_estimated_BW = torch.zeros_like(self.x_real)
@@ -111,7 +116,7 @@ class Trajectory():
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         for i,space_state_vector in enumerate(space_state_vector_list):
-            ax.scatter3D(space_state_vector[:,SS_VARIABLE.X.value], space_state_vector[:,SS_VARIABLE.Y.value], space_state_vector[:,SS_VARIABLE.Z.value],label=SS_to_plot[i].value)
+            ax.scatter3D(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:], space_state_vector[SS_VARIABLE.Z.value,:],label=SS_to_plot[i].value)
         ax.legend()
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
@@ -120,9 +125,9 @@ class Trajectory():
 
         fig, axs = plt.subplots(2)  # 2 rows of subplots
         for space_state_vector in space_state_vector_list:
-            axs[0].plot(space_state_vector[:,SS_VARIABLE.Vx.value],label=f'x {SS_to_plot[i].value}')
-            axs[0].plot(space_state_vector[:,SS_VARIABLE.Vy.value],label=f'y {SS_to_plot[i].value}')
-            axs[0].plot(space_state_vector[:,SS_VARIABLE.Vz.value],label=f'z {SS_to_plot[i].value}')
+            axs[0].plot(space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}')
+            axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
+            axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
         axs[0].set_title(f"{'Momentums' if self.momentum_ss else 'Velocities'} Over Time")
         axs[0].set_ylabel(f"{'Momentums [GeV/c]' if self.momentum_ss else 'Velocity [m/s]'}")
         axs[0].set_xticks([])
@@ -176,7 +181,7 @@ class Traj_Generator():
 
         self.energy[0] = curr_energy = get_energy_from_velocities(self.vx[0],self.vy[0],self.vz[0])
         i=1
-        while (curr_energy > self.energy[0] * 0.001 and i<self.max_traj_length):
+        while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
 
             state_space_vector_prev= (self.x[i-1],self.y[i-1],self.z[i-1],self.vx[i-1],self.vy[i-1],self.vz[i-1])
             state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
@@ -184,6 +189,9 @@ class Traj_Generator():
 
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.vx[i],self.vy[i],self.vz[i])
+            distance_from_z_axis = torch.sqrt(self.x[i]**2 + self.y[i])
+            # if distance_from_z_axis >= CHAMBER_RADIUS:
+            #     break
             i+=1
 
         traj_dict = {
@@ -199,8 +207,8 @@ class Traj_Generator():
             "pz" : convert_velocity_to_momentum(self.vz[:i-1]),
             "energy" : self.energy[:i-1],
         }
-
         traj = Trajectory(real_traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
+        get_mx_0(traj.x_real)
         return traj
 
 def get_energy_from_brho(brho):
@@ -216,18 +224,36 @@ def get_energy_from_brho(brho):
     energy = np.sqrt(p**2 + M_Ener**2) - M_Ener
     return energy,p
 
+def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
+    theta = np.linspace(0, 2*np.pi, 100)  # Create 100 points around the circumference
+    x_fit = x_center_fit + radius_fit * np.cos(theta)  # Calculate x coordinates of points
+    y_fit = y_center_fit + radius_fit * np.sin(theta)  # Calculate y coordinates of points
+    plt.figure()
+    plt.scatter(x_fit,y_fit,label="fit",color='red')
+    plt.plot(traj_x,traj_y,label="true traj")
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.legend()
+    plt.show()
+
+
+
 def get_mx_0(traj_coordinates):
     mx_0 = torch.zeros(6) #Size of state vector is 6x1
-    x = traj_coordinates[:,SS_VARIABLE.X.value]
-    y = traj_coordinates[:,SS_VARIABLE.Y.value]
-    z = traj_coordinates[:,SS_VARIABLE.Z.value]
+    x = traj_coordinates[SS_VARIABLE.X.value,:]
+    y = traj_coordinates[SS_VARIABLE.Y.value,:]
+    z = traj_coordinates[SS_VARIABLE.Z.value,:]
 
-    NUM_POINTS = len(traj_coordinates)
+    NUM_POINTS = traj_coordinates.shape[1]
 
-    model, inliers = ransac(traj_coordinates[:NUM_POINTS,:2].numpy(), CircleModel, min_samples=int(NUM_POINTS*0.1), residual_threshold=6, max_trials=1000)
-    x_center = model.params[0]
-    y_center = model.params[1]
+    model, inliers = ransac(traj_coordinates[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],:].numpy().T, CircleModel, min_samples=max(3,int(NUM_POINTS*0.1)), residual_threshold=6, max_trials=1000)
+    x_center = model.params[0] * CM__TO__M
+    y_center = model.params[1] * CM__TO__M
     init_radius = model.params[2] * CM__TO__M
+    plot_circle_with_fit(x_center,y_center,init_radius,x * CM__TO__M,y* CM__TO__M)
+
+
+
 
     y_from_center = y - y_center
     x_from_center = x - x_center
@@ -236,10 +262,11 @@ def get_mx_0(traj_coordinates):
     phis = phis[0] - phis
     arc_lengths  = phis * init_radius
 
-    ransacc = RANSACRegressor(LinearRegression(),min_samples=int(NUM_POINTS*0.1),residual_threshold=6.0,max_trials=1000)
+    ransacc = RANSACRegressor(LinearRegression(),min_samples=max(2,int(NUM_POINTS*0.1)),residual_threshold=6.0,max_trials=1000)
     ransacc.fit(arc_lengths.reshape(-1,1), z.numpy() * CM__TO__M)
     vector = torch.tensor([1,ransacc.estimator_.intercept_ + ransacc.estimator_.coef_[0]])
-    vector /= torch.sqrt(vector[0]**2 + vector[1]**2)
+    vector /= torch.norm(vector,p=2)
+    
 
     ## Init Angles ##
     init_theta = torch.arccos(vector[1])
@@ -381,9 +408,17 @@ def f(state_space_vector_prev,delta_t):
     return state_space_vector_curr
 
 def h(space_state_vector):
-    H = torch.zeros(3,len(space_state_vector))
+    ''' 
+    INPUT:
+        space_state_vector - shape of [batch_size,space_state_vector_size,1]
+    OUTPUT:
+        space_state_vector - shape of [batch_size,observation_vector_size,1]
+
+    '''
+    H = torch.zeros(3,space_state_vector.shape[1])
     H[0,0] = H[1,1] = H[2,2] = 1
-    return torch.bmm(H,space_state_vector)
+    obs_vector = torch.matmul(H,space_state_vector)
+    return obs_vector
 
 def get_deacceleration(energy_interp):
     '''
@@ -422,8 +457,10 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
     generator = Traj_Generator()
     Dataset = []
     for i in range(N_Train + N_CV + N_Test):
+        print(f"Generating trajectory {i}; Energy - {energy[i]},Theta - {theta[i]},Phi - {phi[i]}")
         Dataset.append(generator.generate(energy=energy[i],theta=theta[i],phi=phi[i]))
-        print(f"Trajectory {i}, Energy - {Dataset[-1].init_energy},Theta - {Dataset[-1].init_teta},Phi - {Dataset[-1].init_phi}")
+
+
     training_set = Dataset[:N_Train]
     Dataset = Dataset[N_Train:]
     CV_set =  Dataset[:N_CV]
@@ -432,13 +469,12 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
     
 
 if __name__ == "__main__":
-    INIT_THETA = 1
     # generate_dataset(N_Train=150,N_CV=25,N_Test=25)
     gen = Traj_Generator()
-    traj = gen.generate(energy=3,theta=INIT_THETA,phi=0)
+    traj = gen.generate(energy=3,theta=1,phi=0)
     traj.traj_plots([Trajectory_SS_Type.Real])
-    df = pd.DataFrame(traj.x_real.numpy(),columns = ['x','y','z','vx','vy','vz'])
-    df.to_csv('debug_traj_energy_3_teta_1.csv', index=False)
+    df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
+    df.to_csv('debug_traj_energy_30_teta_phi_0.csv', index=False)
         
 
     # gen.save_csv(traj_data)

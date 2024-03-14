@@ -17,13 +17,13 @@ class RTSNetNN(KalmanNetNN):
     #############
     ### Build ###
     #############
-    def NNBuild(self, ssModel, args):
+    def NNBuild(self, ssModel, system_config):
 
-        self.InitSystemDynamics(ssModel.f, ssModel.h, ssModel.m, ssModel.n)
+        self.InitSystemDynamics(ssModel.f, ssModel.h, ssModel.space_state_size, ssModel.observation_vector_size)
 
-        self.InitKGainNet(ssModel.prior_Q, ssModel.prior_Sigma, ssModel.prior_S, args)
+        self.InitKGainNet(ssModel.prior_Q, ssModel.prior_Sigma, ssModel.prior_S, system_config)
 
-        self.InitRTSGainNet(ssModel.prior_Q, ssModel.prior_Sigma, args)
+        self.InitRTSGainNet(ssModel.prior_Q, ssModel.prior_Sigma, system_config)
 
     #################################################
     ### Initialize Backward Smoother Gain Network ###
@@ -34,19 +34,19 @@ class RTSNetNN(KalmanNetNN):
 
 
         # BW GRU to track Q
-        self.d_input_Q_bw = self.m * args.in_mult_RTSNet
-        self.d_hidden_Q_bw = self.m ** 2
+        self.d_input_Q_bw = self.space_state_size * args.input_dim_mult_RTSNet
+        self.d_hidden_Q_bw = self.space_state_size ** 2
         self.GRU_Q_bw = nn.GRU(self.d_input_Q_bw, self.d_hidden_Q_bw)
     
         # BW GRU to track Sigma
-        self.d_input_Sigma_bw = self.d_hidden_Q_bw + 2 * self.m * args.in_mult_RTSNet
-        self.d_hidden_Sigma_bw = self.m ** 2
+        self.d_input_Sigma_bw = self.d_hidden_Q_bw + 2 * self.space_state_size * args.input_dim_mult_RTSNet
+        self.d_hidden_Sigma_bw = self.space_state_size ** 2
         self.GRU_Sigma_bw = nn.GRU(self.d_input_Sigma_bw, self.d_hidden_Sigma_bw)
         
         # BW Fully connected 1
         self.d_input_FC1_bw = self.d_hidden_Sigma_bw # + self.d_hidden_Q
-        self.d_output_FC1_bw = self.m * self.m
-        self.d_hidden_FC1_bw = self.d_input_FC1_bw * args.out_mult_RTSNet
+        self.d_output_FC1_bw = self.space_state_size * self.space_state_size
+        self.d_hidden_FC1_bw = self.d_input_FC1_bw * args.output_dim_mult_RTSNet
         self.FC1_bw = nn.Sequential(
                 nn.Linear(self.d_input_FC1_bw, self.d_hidden_FC1_bw),
                 nn.ReLU(),
@@ -60,15 +60,15 @@ class RTSNetNN(KalmanNetNN):
                 nn.ReLU())
         
         # BW Fully connected 3
-        self.d_input_FC3_bw = self.m
-        self.d_output_FC3_bw = self.m * args.in_mult_RTSNet
+        self.d_input_FC3_bw = self.space_state_size
+        self.d_output_FC3_bw = self.space_state_size * args.input_dim_mult_RTSNet
         self.FC3_bw = nn.Sequential(
                 nn.Linear(self.d_input_FC3_bw, self.d_output_FC3_bw),
                 nn.ReLU())
 
         # BW Fully connected 4
-        self.d_input_FC4_bw = 2 * self.m
-        self.d_output_FC4_bw = 2 * self.m * args.in_mult_RTSNet
+        self.d_input_FC4_bw = 2 * self.space_state_size
+        self.d_output_FC4_bw = 2 * self.space_state_size * args.input_dim_mult_RTSNet
         self.FC4_bw = nn.Sequential(
                 nn.Linear(self.d_input_FC4_bw, self.d_output_FC4_bw),
                 nn.ReLU())
@@ -117,7 +117,7 @@ class RTSNetNN(KalmanNetNN):
         SG = self.RTSGain_step(bw_innov_diff, bw_evol_diff, bw_update_diff)
 
         # Reshape Smoother Gain to a Matrix
-        self.SGain = torch.reshape(SG, (self.batch_size, self.m, self.m))
+        self.SGain = torch.reshape(SG, (self.batch_size, self.space_state_size, self.space_state_size))
 
     ####################
     ### RTS Net Step ###

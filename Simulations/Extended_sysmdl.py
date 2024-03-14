@@ -18,46 +18,32 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 
 class SystemModel:
 
-    def __init__(self, f, Q, h, R, T, T_test, m, n, Origin_f, Origin_h, prior_Q=None, prior_Sigma=None, prior_S=None):
-
+    def __init__(self, f, h, space_state_size,observation_vector_size,prior_Q=None,prior_Sigma = None,prior_S = None):
         ####################
         ### Motion Model ###
         ####################
         self.f = f
-        self.m = m
-        self.Q = Q
+        self.space_state_size = space_state_size
 
-        self.Origin_f = Origin_f # f without batched version, for Jacobian calculation use
         #########################
         ### Observation Model ###
         #########################
         self.h = h
-        self.n = n
-        self.R = R
+        self.observation_vector_size = observation_vector_size
 
-        self.Origin_h = Origin_h # h without batched version, for Jacobian calculation use
-        ################
-        ### Sequence ###
-        ################
-        # Assign T
-        self.T = T
-        self.T_test = T_test
 
-        #########################
-        ### Covariance Priors ###
-        #########################
         if prior_Q is None:
-            self.prior_Q = torch.eye(self.m)
+            self.prior_Q = torch.eye(self.space_state_size)
         else:
             self.prior_Q = prior_Q
 
         if prior_Sigma is None:
-            self.prior_Sigma = torch.zeros((self.m, self.m))
+            self.prior_Sigma = torch.zeros((self.space_state_size, self.space_state_size))
         else:
             self.prior_Sigma = prior_Sigma
 
         if prior_S is None:
-            self.prior_S = torch.eye(self.n)
+            self.prior_S = torch.eye(self.observation_vector_size)
         else:
             self.prior_S = prior_S
 
