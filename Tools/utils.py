@@ -190,8 +190,8 @@ class Traj_Generator():
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.vx[i],self.vy[i],self.vz[i])
             distance_from_z_axis = torch.sqrt(self.x[i]**2 + self.y[i])
-            # if distance_from_z_axis >= CHAMBER_RADIUS:
-            #     break
+            if distance_from_z_axis >= CHAMBER_RADIUS:
+                break
             i+=1
 
         traj_dict = {
@@ -471,10 +471,10 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
 if __name__ == "__main__":
     # generate_dataset(N_Train=150,N_CV=25,N_Test=25)
     gen = Traj_Generator()
-    traj = gen.generate(energy=3,theta=1,phi=0)
+    traj = gen.generate(energy=30,theta=1,phi=0)
     traj.traj_plots([Trajectory_SS_Type.Real])
     df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
-    df.to_csv('debug_traj_energy_30_teta_phi_0.csv', index=False)
+    df.to_csv('debug_traj_energy_30_teta_phi_0_new.csv', index=False)
         
 
     # gen.save_csv(traj_data)
