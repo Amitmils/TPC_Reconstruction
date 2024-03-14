@@ -183,9 +183,15 @@ class Traj_Generator():
         i=1
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
 
-            state_space_vector_prev= (self.x[i-1],self.y[i-1],self.z[i-1],self.vx[i-1],self.vy[i-1],self.vz[i-1])
+            state_space_vector_prev= torch.tensor([self.x[i-1],self.y[i-1],self.z[i-1],self.vx[i-1],self.vy[i-1],self.vz[i-1]]).unsqueeze(0).unsqueeze(-1)
             state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
-            (self.x[i],self.y[i],self.z[i],self.vx[i],self.vy[i],self.vz[i]) = state_space_vector_curr
+            self.x[i]  = state_space_vector_curr[:,SS_VARIABLE.X.value].item()
+            self.y[i]  = state_space_vector_curr[:,SS_VARIABLE.Y.value].item()
+            self.z[i]  = state_space_vector_curr[:,SS_VARIABLE.Z.value].item()
+            self.vx[i] = state_space_vector_curr[:,SS_VARIABLE.Vx.value].item()
+            self.vy[i] = state_space_vector_curr[:,SS_VARIABLE.Vy.value].item()
+            self.vz[i] = state_space_vector_curr[:,SS_VARIABLE.Vz.value].item()
+
 
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.vx[i],self.vy[i],self.vz[i])
@@ -229,8 +235,8 @@ def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
     x_fit = x_center_fit + radius_fit * np.cos(theta)  # Calculate x coordinates of points
     y_fit = y_center_fit + radius_fit * np.sin(theta)  # Calculate y coordinates of points
     plt.figure()
-    plt.scatter(x_fit,y_fit,label="fit",color='red')
-    plt.plot(traj_x,traj_y,label="true traj")
+    plt.plot(x_fit,y_fit,label="fit",color='red')
+    plt.scatter(traj_x,traj_y,label="true traj")
     plt.xlabel("X[cm]")
     plt.ylabel("Y[cm]")
     plt.legend()
@@ -250,7 +256,7 @@ def get_mx_0(traj_coordinates):
     x_center = model.params[0] 
     y_center = model.params[1] 
     init_radius = model.params[2] * CM__TO__M
-    plot_circle_with_fit(x_center * CM__TO__M,y_center * CM__TO__M,init_radius,x * CM__TO__M,y* CM__TO__M)
+    # plot_circle_with_fit(x_center * CM__TO__M,y_center * CM__TO__M,init_radius,x * CM__TO__M,y* CM__TO__M)
 
 
 
@@ -357,7 +363,8 @@ def get_vel_deriv(vx,vy,vz,direction):
     a *= M_S_SQUARED__TO__CM_NS_SQUARED
     return a
 
-def f(state_space_vector_prev,delta_t):
+#TODO make f_gen and f one
+def f_gen(state_space_vector_prev,delta_t):
     x,y,z,vx,vy,vz = state_space_vector_prev
 
     ## f1 ##
@@ -407,6 +414,69 @@ def f(state_space_vector_prev,delta_t):
     state_space_vector_curr = (x,y,z,vx,vy,vz)
     return state_space_vector_curr
 
+def f(state_space_vector_prev,delta_t):
+    '''
+    INPUT:
+        state_space_vector_prev - shape of [batch_size,space_vector_size,1]
+        delta_t - RK step
+    
+    '''
+    x = state_space_vector_prev[:,SS_VARIABLE.X.value]
+    y = state_space_vector_prev[:,SS_VARIABLE.Y.value]
+    z = state_space_vector_prev[:,SS_VARIABLE.Z.value]
+    vx = state_space_vector_prev[:,SS_VARIABLE.Vx.value]
+    vy = state_space_vector_prev[:,SS_VARIABLE.Vy.value]
+    vz = state_space_vector_prev[:,SS_VARIABLE.Vz.value]
+
+
+
+    ## f1 ##
+    k1x = vx
+    k1y = vy
+    k1z = vz
+
+    k1vx = get_vel_deriv(vx,vy,vz,direction='x')
+    k1vy = get_vel_deriv(vx,vy,vz,direction='y')
+    k1vz = get_vel_deriv(vx,vy,vz,direction='z')
+
+    ## f2 ##
+    k2x = vx + 0.5 * delta_t * k1x
+    k2y = vy + 0.5 * delta_t * k1y
+    k2z = vz + 0.5 * delta_t * k1z
+
+    k2vx = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='x')
+    k2vy = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='y')
+    k2vz = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='z')
+
+    ## f3 ##
+    k3x = vx + 0.5 * delta_t * k2x
+    k3y = vy + 0.5 * delta_t * k2y
+    k3z = vz + 0.5 * delta_t * k2z
+
+    k3vx = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='x')
+    k3vy = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='y')
+    k3vz = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='z')
+
+    ## f4 ##
+    k4x = vx + delta_t * k3x
+    k4y = vy + delta_t * k3y
+    k4z = vz + delta_t * k3z
+
+    k4vx = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='x')
+    k4vy = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='y')
+    k4vz = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='z')
+
+    vx = vx + (delta_t/6) * (k1vx+ 2*k2vx + 2*k3vx + k4vx)
+    vy = vy + (delta_t/6) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
+    vz = vz + (delta_t/6) * (k1vz + 2*k2vz + 2*k3vz + k4vz)
+
+    x = x + (delta_t/6) * (k1x + 2*k2x + 2*k3x + k4x)
+    y = y + (delta_t/6) * (k1y + 2*k2y + 2*k3y + k4y)
+    z = z + (delta_t/6) * (k1z + 2*k2z + 2*k3z + k4z)
+
+    state_space_vector_curr = torch.cat((x,y,z,vx,vy,vz),dim=1).unsqueeze(-1)
+    return state_space_vector_curr
+
 def h(space_state_vector):
     ''' 
     INPUT:
@@ -428,15 +498,15 @@ def get_deacceleration(energy_interp):
         interp_stopping_acc - [m/s^2]
     '''
     gasMediumDensity = 8.988e-5 #g/cm3 at 1 bar
-    data = np.loadtxt("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Tools/stpHydrogen.txt")
+    data = np.loadtxt("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Tools/stpHydrogen.txt", dtype=float)
     energy = data[:, 0]  # First column
     stopping_power = data[:, 1]  # Second column
     tck = splrep(energy, stopping_power)
-    interp_stopping_power = splev(energy_interp, tck)
+    interp_stopping_power = splev(energy_interp.detach(), tck)
 
     interp_stopping_force =interp_stopping_power * 1.6021773349e-13 * gasMediumDensity*100
     interp_stopping_acc = interp_stopping_force / MASS_PROTON_KG
-    return interp_stopping_acc
+    return interp_stopping_acc.float()
 
 def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "TPC_Reconstruction/Simulations/Particle_Tracking/data"):
     assert (N_Train+N_Test+N_CV)<=2000, "Maximum of 2k Trajectories can be made"
@@ -469,12 +539,11 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
     
 
 if __name__ == "__main__":
-    # generate_dataset(N_Train=150,N_CV=25,N_Test=25)
-    gen = Traj_Generator()
-    traj = gen.generate(energy=30,theta=1,phi=0)
-    traj.traj_plots([Trajectory_SS_Type.Real])
-    df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
-    df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)
-        
+    generate_dataset(N_Train=150,N_CV=25,N_Test=25)
+    # gen = Traj_Generator()
+    # traj = gen.generate(energy=12,theta=1,phi=0)
+    # traj.traj_plots([Trajectory_SS_Type.Real])
+    # df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
+    # df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)
 
     # gen.save_csv(traj_data)

@@ -83,7 +83,7 @@ class RTSNetNN(KalmanNetNN):
     ### Innovation Computation ###
     ##############################
     def S_Innovation(self, filter_x):
-        self.filter_x_prior = self.f(filter_x)
+        self.filter_x_prior = self.f(filter_x,self.config.delta_t)
         # x_t+1|T - x_t+1|t (AMIT)
         self.dx = self.s_m1x_nexttime - self.filter_x_prior
 
@@ -190,7 +190,7 @@ class RTSNetNN(KalmanNetNN):
     ###############
     ### Forward ###
     ###############
-    def forward(self, yt, filter_x, filter_x_nexttime, smoother_x_tplus2):
+    def forward(self, yt = None, filter_x = None, filter_x_nexttime = None, smoother_x_tplus2 = None):
         if yt is None:
             # BW pass
             return self.RTSNet_step(filter_x, filter_x_nexttime, smoother_x_tplus2)

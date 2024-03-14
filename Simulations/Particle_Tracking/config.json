@@ -17,11 +17,12 @@
     "input_dim_mult_RTSNet" : 5,
     "output_dim_mult_RTSNet" : 40,
 
+    "CompositionLoss" : false,
     "two_pass" : false,
     "load_trained_pass1" : false,
     "load_dataset_for_pass2" : false,
     "path_results" : "RTSNet/",
-    "Dataset_path" : "TPC_Reconstruction/Simulations/Particle_Tracking/data/dataset_14_03_24__09_42.pt"
+    "Dataset_path" : "TPC_Reconstruction/Simulations/Particle_Tracking/data/dataset_14_03_24__21_49.pt"
     
 
     

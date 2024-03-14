@@ -135,7 +135,7 @@ class KalmanNetNN(torch.nn.Module):
     ######################
     def step_prior(self):
         # Predict the 1-st moment of x
-        self.m1x_prior = self.f(self.m1x_posterior)
+        self.m1x_prior = self.f(self.m1x_posterior,self.config.delta_t)
 
         # Predict the 1-st moment of y  
         self.m1y = self.h(self.m1x_prior)

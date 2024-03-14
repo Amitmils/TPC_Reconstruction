@@ -29,6 +29,8 @@ class Pipeline_ERTS:
 
     def setModel(self, model):
         self.model = model
+        self.model.config = self.config
+
 
     def setTrainingParams(self):
         if self.config.use_cuda:
@@ -97,14 +99,17 @@ class Pipeline_ERTS:
             n_e = random.sample(range(self.train_set_size), k=self.batch_size)
 
             train_batch = [train_set[idx] for idx in n_e]
-            traj_lengths_in_batch = torch.tensor([traj.traj_length for traj in train_batch])
+            traj_lengths_in_batch = torch.tensor([10 for traj in train_batch])#torch.tensor([traj.traj_length for traj in train_batch])
             max_traj_lenghth_in_batch = torch.max(traj_lengths_in_batch)
 
             # Init Training Batch tensors
             y_training_batch = torch.zeros([self.batch_size, SysModel.observation_vector_size, max_traj_lenghth_in_batch])
             train_target_batch = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
             x_out_training_forward_batch = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
+            x_out_training_forward_batch_flipped = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
             x_out_training_batch = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
+            x_out_training_batch_flipped = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
+
             if self.config.randomLength:
                 MSE_train_linear_LOSS = torch.zeros([self.batch_size])
                 MSE_cv_linear_LOSS = torch.zeros([self.CV_set_size])
@@ -115,44 +120,45 @@ class Pipeline_ERTS:
                     y_training_batch[ii,:,train_lengthMask[index,:]] = train_set[index,:,train_lengthMask[index,:]].y
                     train_target_batch[ii,:,train_lengthMask[index,:]] = train_set[index,:,train_lengthMask[index,:]].x_real
                 else:
-                    y_training_batch[ii,:,:traj_lengths_in_batch[ii]] = train_batch[ii].y
-                    train_target_batch[ii,:,:traj_lengths_in_batch[ii]] = train_batch[ii].x_real
+                    y_training_batch[ii,:,:traj_lengths_in_batch[ii]] = train_batch[ii].y[:,:traj_lengths_in_batch[ii]]
+                    train_target_batch[ii,:,:traj_lengths_in_batch[ii]] = train_batch[ii].x_real[:,:traj_lengths_in_batch[ii]]
                 ii += 1
             
             M1_0 = []
             for id_in_batch,obs_traj in enumerate(y_training_batch):
                 m1_0 = get_mx_0(obs_traj[:,:traj_lengths_in_batch[id_in_batch]]).unsqueeze(0)
                 M1_0.append(m1_0)
-            M1_0 = torch.cat(M1_0,dim=0).unsqueeze(-1)
-            self.model.InitSequence(M1_0,max_traj_lenghth_in_batch)
-
-            # # Init Sequence
-            # if(randomInit):
-            #     train_init_batch = torch.empty([self.batch_size, SysModel.space_state_size,1])
-            #     ii = 0
-            #     for index in n_e:
-            #         train_init_batch[ii,:,0] = torch.squeeze(train_init[index])
-            #         ii += 1
-            #     self.model.InitSequence(train_init_batch, SysModel.T)
-            # else:
-            #     self.model.InitSequence(\
-            #     train_set[0].x_real[:,0].reshape(1,SysModel.space_state_size,1).repeat(self.batch_size,1,1), 68)
-
-            
-            
+            M1_0 = torch.cat(M1_0,dim=0)
+            x_out_training_forward_batch[:, :, 0] = M1_0
+            self.model.InitSequence(M1_0.unsqueeze(-1),max_traj_lenghth_in_batch)
             
             # Forward Computation
-            for t in range(0,max_traj_lenghth_in_batch):
-                x_out_training_forward_batch[:, :, t] = torch.squeeze(self.model(torch.unsqueeze(y_training_batch[:, :, t],2), None, None, None))
-            x_out_training_batch[:, :, SysModel.T-1] = x_out_training_forward_batch[:, :, SysModel.T-1] # backward smoothing starts from x_T|T 
-            self.model.InitBackward(torch.unsqueeze(x_out_training_batch[:, :, SysModel.T-1],2)) 
-            x_out_training_batch[:, :, SysModel.T-2] = torch.squeeze(self.model(None, torch.unsqueeze(x_out_training_forward_batch[:, :, SysModel.T-2],2), torch.unsqueeze(x_out_training_forward_batch[:, :, SysModel.T-1],2),None))
-            for t in range(SysModel.T-3, -1, -1):
-                x_out_training_batch[:, :, t] = torch.squeeze(self.model(None, torch.unsqueeze(x_out_training_forward_batch[:, :, t],2), torch.unsqueeze(x_out_training_forward_batch[:, :, t+1],2),torch.unsqueeze(x_out_training_batch[:, :, t+2],2)))
-                
+            for t in range(1,max_traj_lenghth_in_batch):
+                x_out_training_forward_batch[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_training_batch[:, :, t],2)))
+            
+            # Flip the order (this is needed because each trajectoy has a different length)
+            for id_in_batch,x_out_FW in enumerate(x_out_training_forward_batch):
+                x_out_training_forward_batch_flipped[id_in_batch,:,:traj_lengths_in_batch[id_in_batch]] = torch.flip(x_out_FW[:,:traj_lengths_in_batch[id_in_batch]],dims=[1])
+            
+            x_out_training_batch_flipped[:,:,0] = x_out_training_forward_batch_flipped[:,:,0]
+            self.model.InitBackward(torch.unsqueeze(x_out_training_batch[:, :, 0],2))
+            x_out_training_batch_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 1],2),
+                                                                             filter_x_nexttime = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 0],2)))
+            
+            # Backward Computation; index k happens after k+1. 
+            # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
+            for k in range(2,max_traj_lenghth_in_batch):
+                x_out_training_batch_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_batch_flipped[:, :, k],2), 
+                                                                                 filter_x_nexttime = torch.unsqueeze(x_out_training_batch_flipped[:, :, k-1],2),
+                                                                                 smoother_x_tplus2 = torch.unsqueeze(x_out_training_batch_flipped[:, :, k-2],2)))
+            
+            # Flip back to original order
+            for id_in_batch,x_out in enumerate(x_out_training_batch_flipped):
+                x_out_training_batch[id_in_batch,:,:traj_lengths_in_batch[id_in_batch]] = torch.flip(x_out[:,:traj_lengths_in_batch[id_in_batch]],dims=[1])
+
             # Compute Training Loss
             MSE_trainbatch_linear_LOSS = 0
-            if (self.args.CompositionLoss):
+            if (self.config.CompositionLoss):
                 y_hat = torch.zeros([self.batch_size, SysModel.observation_vector_size, SysModel.T])
                 for t in range(SysModel.T):
                     y_hat[:,:,t] = torch.squeeze(SysModel.h(torch.unsqueeze(x_out_training_batch[:,:,t],2)))
@@ -187,7 +193,7 @@ class Pipeline_ERTS:
                     else:
                         MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_batch[:,mask,:], train_target_batch[:,mask,:])
                 else: # no mask on state
-                    if self.args.randomLength:
+                    if self.config.randomLength:
                         jj = 0
                         for index in n_e:# mask out the padded part when computing loss
                             MSE_train_linear_LOSS[jj] = self.loss_fn(x_out_training_batch[jj,:,train_lengthMask[index]], train_target_batch[jj,:,train_lengthMask[index]])
