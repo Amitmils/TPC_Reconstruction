@@ -247,10 +247,10 @@ def get_mx_0(traj_coordinates):
     NUM_POINTS = traj_coordinates.shape[1]
 
     model, inliers = ransac(traj_coordinates[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],:].numpy().T, CircleModel, min_samples=max(3,int(NUM_POINTS*0.1)), residual_threshold=6, max_trials=1000)
-    x_center = model.params[0] * CM__TO__M
-    y_center = model.params[1] * CM__TO__M
+    x_center = model.params[0] 
+    y_center = model.params[1] 
     init_radius = model.params[2] * CM__TO__M
-    plot_circle_with_fit(x_center,y_center,init_radius,x * CM__TO__M,y* CM__TO__M)
+    plot_circle_with_fit(x_center * CM__TO__M,y_center * CM__TO__M,init_radius,x * CM__TO__M,y* CM__TO__M)
 
 
 
