@@ -14,7 +14,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
 
 
-
+#  https://skisickness.com/2010/04/relativistic-kinematics-calculator/
 class SS_VARIABLE(enum.Enum):
     X = 0
     Y = 1
@@ -152,7 +152,7 @@ class Traj_Generator():
         self.vz = torch.zeros((self.max_traj_length ,1))
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
-        self.delta_t = 0.5 #step size in nseconds
+        self.delta_t = 0.05 #step size in nseconds
 
     def set_init_values(self,energy=None,theta=None,init_vx=None,init_vy=None,init_vz=None,phi=0,init_x=0,init_y=0,init_z=0):
         self.init_energy = energy
@@ -231,8 +231,8 @@ def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
     plt.figure()
     plt.scatter(x_fit,y_fit,label="fit",color='red')
     plt.plot(traj_x,traj_y,label="true traj")
-    plt.xlabel("X")
-    plt.ylabel("Y")
+    plt.xlabel("X[cm]")
+    plt.ylabel("Y[cm]")
     plt.legend()
     plt.show()
 
@@ -474,7 +474,7 @@ if __name__ == "__main__":
     traj = gen.generate(energy=30,theta=1,phi=0)
     traj.traj_plots([Trajectory_SS_Type.Real])
     df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
-    df.to_csv('debug_traj_energy_30_teta_phi_0_new.csv', index=False)
+    df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)
         
 
     # gen.save_csv(traj_data)
