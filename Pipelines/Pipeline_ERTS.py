@@ -7,8 +7,11 @@ import torch
 import torch.nn as nn
 import time
 import random
+import numpy as np
 from Plot import Plot_extended as Plot
-from Tools.utils import get_mx_0
+from Tools.utils import get_mx_0,Training_Mode,Trajectory_SS_Type
+import os
+import matplotlib.pyplot as plt
 
 class Pipeline_ERTS:
 
@@ -20,6 +23,8 @@ class Pipeline_ERTS:
         self.modelName = modelName
         self.modelFileName = self.folderName + "model_" + self.modelName + ".pt"
         self.PipelineName = self.folderName + "pipeline_" + self.modelName + ".pt"
+        self.phase_change_epochs = [0] #for Visualization - aggregate the epochs which a phase changed
+
 
     def save(self):
         torch.save(self, self.PipelineName)
@@ -37,9 +42,22 @@ class Pipeline_ERTS:
             self.device = torch.device('cuda')
         else:
             self.device = torch.device('cpu')
-        self.num_epochs = self.config.n_epochs  # Number of Training Steps
+        self.num_epochs = np.sum([phase_config["n_epochs"] for phase_config in self.config.training_scheduler.values()])  # Number of Training Steps
         self.batch_size = self.config.batch_size # Number of Samples in Batch
-        self.learningRate = self.config.lr # Learning Rate
+        self.total_num_phases = len(self.config.training_scheduler)
+
+        self.current_phase = str(self.config.first_phase_id)
+        if self.current_phase !="0":
+            prev_phase = str(int(self.current_phase)-1)
+            weights_path = os.path.join(self.config.path_results,f"best-model-weights_P{prev_phase}.pt")
+            model_weights = torch.load(weights_path, map_location=self.device)
+            self.model.load_state_dict(model_weights)
+            print(f"Loaded Weights from {os.path.basename(weights_path)}")
+        self.learningRate = self.config.training_scheduler[self.current_phase]["lr"] # Learning Rate of first phase
+        self.num_epochs_in_phase = self.config.training_scheduler[self.current_phase]["n_epochs"]
+        self.next_phase_change = self.num_epochs_in_phase # Which epoch to change to next phase
+        self.max_train_sequence_length = self.config.training_scheduler[self.current_phase]["max_train_sequence_length"]
+        self.TRAINING_MODE = Training_Mode(self.config.training_scheduler[self.current_phase]["mode"])
         self.weightDecay = self.config.wd # L2 Weight Regularization - Weight Decay
         # self.alpha = self.config.alpha # Composition loss factor
         # MSE LOSS Function
@@ -51,9 +69,39 @@ class Pipeline_ERTS:
         # optimizer which Tensors it should update.
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learningRate, weight_decay=self.weightDecay)
         # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min',factor=0.9, patience=20)
+        if self.config.train == True:
+            self.report_training_phase()
 
+    def update_learning_rate(self,lr):
+        self.learningRate = lr
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = lr
 
-    def NNTrain(self, SysModel, train_set, cv_set, path_results, \
+    def switch_to_next_phase(self):
+        #Load best weights from phase
+        weights_path = os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt")
+        model_weights = torch.load(weights_path, map_location=self.device)
+        self.model.load_state_dict(model_weights)
+        #continue to next phase
+        self.current_phase = str(int(self.current_phase)+1)
+        self.num_epochs_in_phase = self.config.training_scheduler[self.current_phase]["n_epochs"]
+        self.next_phase_change = self.next_phase_change + self.num_epochs_in_phase
+        self.max_train_sequence_length = self.config.training_scheduler[self.current_phase]["max_train_sequence_length"]
+        self.update_learning_rate(self.config.training_scheduler[self.current_phase]["lr"])
+        if self.config.training_scheduler[self.current_phase]["mode"] == "FW":
+            self.TRAINING_MODE = Training_Mode.FW_ONLY
+        self.report_training_phase()
+
+    def report_training_phase(self):
+        print(f"\n######## Entered Training Phase {self.current_phase} ########\n\n"
+              f"Num. of epochs in phase : {self.num_epochs_in_phase}\n"
+              f"Next Switch Epoch : {self.next_phase_change}\n"
+              f"Learning Rate : {self.learningRate}\n"
+              f"Max Seq Length : {self.max_train_sequence_length}\n"
+              f"Mode : {self.TRAINING_MODE.value}\n\n"
+              "########################################\n")
+
+    def NNTrain(self, SysModel, train_set, cv_set, \
         MaskOnState=False, randomInit=False,cv_init=None,train_init=None,\
         train_lengthMask=None,cv_lengthMask=None):
 
@@ -63,9 +111,14 @@ class Pipeline_ERTS:
 
         self.train_set_size = len(train_set)
         self.CV_set_size = len(cv_set)
+        
 
         self.MSE_cv_linear_epoch = torch.zeros([self.num_epochs])
         self.MSE_cv_dB_epoch = torch.zeros([self.num_epochs])
+        self.MSE_cv_opt_id_phase = torch.zeros([self.total_num_phases])
+        self.MSE_cv_opt_dB_phase = torch.zeros([self.total_num_phases])
+
+
 
         self.MSE_train_linear_epoch = torch.zeros([self.num_epochs])
         self.MSE_train_dB_epoch = torch.zeros([self.num_epochs])
@@ -84,6 +137,15 @@ class Pipeline_ERTS:
 
         for ti in range(0, self.num_epochs):
 
+            if ti == self.next_phase_change:
+                self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
+                self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
+                self.MSE_cv_dB_opt = 1000
+                self.phase_change_epochs.append(ti) #for Visualization - aggregate the epochs which a phase changed
+                self.switch_to_next_phase()
+
+
+
             ###############################
             ### Training Sequence Batch ###
             ###############################
@@ -98,109 +160,70 @@ class Pipeline_ERTS:
             assert self.batch_size <= self.train_set_size # N_B must be smaller than N_E
             n_e = random.sample(range(self.train_set_size), k=self.batch_size)
 
-            train_batch = [train_set[idx] for idx in n_e]
-            traj_lengths_in_batch = torch.tensor([10 for traj in train_batch])#torch.tensor([traj.traj_length for traj in train_batch])
-            max_traj_lenghth_in_batch = torch.max(traj_lengths_in_batch)
+            train_batch = [train_set[idx] for idx in n_e if train_set[idx].traj_length>-1]
+
+            force_max_length = torch.inf if self.max_train_sequence_length == -1 else self.max_train_sequence_length
+            traj_lengths_in_train_batch = torch.tensor([min(force_max_length,traj.traj_length) for traj in train_batch])
+            max_traj_length_in_train_batch = torch.max(traj_lengths_in_train_batch)
 
             # Init Training Batch tensors
-            y_training_batch = torch.zeros([self.batch_size, SysModel.observation_vector_size, max_traj_lenghth_in_batch])
-            train_target_batch = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
-            x_out_training_forward_batch = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
-            x_out_training_forward_batch_flipped = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
-            x_out_training_batch = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
-            x_out_training_batch_flipped = torch.zeros([self.batch_size, SysModel.space_state_size, max_traj_lenghth_in_batch])
+            y_training_batch = torch.zeros([len(train_batch), SysModel.observation_vector_size, max_traj_length_in_train_batch])
+            train_target_batch = torch.zeros([len(train_batch), SysModel.space_state_size, max_traj_length_in_train_batch])
+            x_out_training_forward_batch = torch.zeros([len(train_batch), SysModel.space_state_size, max_traj_length_in_train_batch])
+            x_out_training_forward_batch_flipped = torch.zeros([len(train_batch), SysModel.space_state_size, max_traj_length_in_train_batch])
+            x_out_training_batch = torch.zeros([len(train_batch), SysModel.space_state_size, max_traj_length_in_train_batch])
+            x_out_training_batch_flipped = torch.zeros([len(train_batch), SysModel.space_state_size, max_traj_length_in_train_batch])
+            mask_train = torch.zeros([len(train_batch), SysModel.space_state_size, max_traj_length_in_train_batch])#zeroify values that are after the traj length
 
-            if self.config.randomLength:
-                MSE_train_linear_LOSS = torch.zeros([self.batch_size])
-                MSE_cv_linear_LOSS = torch.zeros([self.CV_set_size])
-
-
-            for ii in range(self.batch_size):
-                if self.config.randomLength:
-                    y_training_batch[ii,:,train_lengthMask[index,:]] = train_set[index,:,train_lengthMask[index,:]].y
-                    train_target_batch[ii,:,train_lengthMask[index,:]] = train_set[index,:,train_lengthMask[index,:]].x_real
-                else:
-                    y_training_batch[ii,:,:traj_lengths_in_batch[ii]] = train_batch[ii].y[:,:traj_lengths_in_batch[ii]]
-                    train_target_batch[ii,:,:traj_lengths_in_batch[ii]] = train_batch[ii].x_real[:,:traj_lengths_in_batch[ii]]
-                ii += 1
-            
             M1_0 = []
-            for id_in_batch,obs_traj in enumerate(y_training_batch):
-                m1_0 = get_mx_0(obs_traj[:,:traj_lengths_in_batch[id_in_batch]]).unsqueeze(0)
-                M1_0.append(m1_0)
+            for ii in range(len(train_batch)):
+                y_training_batch[ii,:,:traj_lengths_in_train_batch[ii]] = train_batch[ii].y[:,:traj_lengths_in_train_batch[ii]]
+                train_target_batch[ii,:,:traj_lengths_in_train_batch[ii]] = train_batch[ii].x_real[:,:traj_lengths_in_train_batch[ii]]
+                mask_train[ii,:,:traj_lengths_in_train_batch[ii]] = 1
+                m1_0_real,para_real = get_mx_0(train_batch[ii].x_real)
+                m1_0_noisy,para_noisy = get_mx_0(train_batch[ii].y,forced_phi=para_real['initial_phi'])
+                # print(para_real,m1_0_real)
+                # print(para_noisy,m1_0_noisy)
+                M1_0.append(m1_0_noisy.unsqueeze(0))
+                ii += 1
+
             M1_0 = torch.cat(M1_0,dim=0)
             x_out_training_forward_batch[:, :, 0] = M1_0
-            self.model.InitSequence(M1_0.unsqueeze(-1),max_traj_lenghth_in_batch)
-            
+            self.model.InitSequence(M1_0.unsqueeze(-1),max_traj_length_in_train_batch)
+
             # Forward Computation
-            for t in range(1,max_traj_lenghth_in_batch):
+            for t in range(1,max_traj_length_in_train_batch):
                 x_out_training_forward_batch[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_training_batch[:, :, t],2)))
-            
-            # Flip the order (this is needed because each trajectoy has a different length)
-            for id_in_batch,x_out_FW in enumerate(x_out_training_forward_batch):
-                x_out_training_forward_batch_flipped[id_in_batch,:,:traj_lengths_in_batch[id_in_batch]] = torch.flip(x_out_FW[:,:traj_lengths_in_batch[id_in_batch]],dims=[1])
-            
-            x_out_training_batch_flipped[:,:,0] = x_out_training_forward_batch_flipped[:,:,0]
-            self.model.InitBackward(torch.unsqueeze(x_out_training_batch[:, :, 0],2))
-            x_out_training_batch_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 1],2),
-                                                                             filter_x_nexttime = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 0],2)))
-            
-            # Backward Computation; index k happens after k+1. 
-            # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
-            for k in range(2,max_traj_lenghth_in_batch):
-                x_out_training_batch_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_batch_flipped[:, :, k],2), 
-                                                                                 filter_x_nexttime = torch.unsqueeze(x_out_training_batch_flipped[:, :, k-1],2),
-                                                                                 smoother_x_tplus2 = torch.unsqueeze(x_out_training_batch_flipped[:, :, k-2],2)))
-            
-            # Flip back to original order
-            for id_in_batch,x_out in enumerate(x_out_training_batch_flipped):
-                x_out_training_batch[id_in_batch,:,:traj_lengths_in_batch[id_in_batch]] = torch.flip(x_out[:,:traj_lengths_in_batch[id_in_batch]],dims=[1])
 
-            # Compute Training Loss
-            MSE_trainbatch_linear_LOSS = 0
-            if (self.config.CompositionLoss):
-                y_hat = torch.zeros([self.batch_size, SysModel.observation_vector_size, SysModel.T])
-                for t in range(SysModel.T):
-                    y_hat[:,:,t] = torch.squeeze(SysModel.h(torch.unsqueeze(x_out_training_batch[:,:,t],2)))
 
-                if(MaskOnState):### FIXME: composition loss, y_hat may have different mask with x
-                    if self.args.randomLength:
-                        jj = 0
-                        for index in n_e:# mask out the padded part when computing loss
-                            MSE_train_linear_LOSS[jj] = self.alpha * self.loss_fn(x_out_training_batch[jj,mask,train_lengthMask[index]], train_target_batch[jj,mask,train_lengthMask[index]])+(1-self.alpha)*self.loss_fn(y_hat[jj,mask,train_lengthMask[index]], y_training_batch[jj,mask,train_lengthMask[index]])
-                            jj += 1
-                        MSE_trainbatch_linear_LOSS = torch.mean(MSE_train_linear_LOSS)
-                    else:                     
-                        MSE_trainbatch_linear_LOSS = self.alpha * self.loss_fn(x_out_training_batch[:,mask,:], train_target_batch[:,mask,:])+(1-self.alpha)*self.loss_fn(y_hat[:,mask,:], y_training_batch[:,mask,:])
-                else:# no mask on state
-                    if self.args.randomLength:
-                        jj = 0
-                        for index in n_e:# mask out the padded part when computing loss
-                            MSE_train_linear_LOSS[jj] = self.alpha * self.loss_fn(x_out_training_batch[jj,:,train_lengthMask[index]], train_target_batch[jj,:,train_lengthMask[index]])+(1-self.alpha)*self.loss_fn(y_hat[jj,:,train_lengthMask[index]], y_training_batch[jj,:,train_lengthMask[index]])
-                            jj += 1
-                        MSE_trainbatch_linear_LOSS = torch.mean(MSE_train_linear_LOSS)
-                    else:                
-                        MSE_trainbatch_linear_LOSS = self.alpha * self.loss_fn(x_out_training_batch, train_target_batch)+(1-self.alpha)*self.loss_fn(y_hat, y_training_batch)
-            
-            else:# no composition loss
-                if(MaskOnState):
-                    if self.args.randomLength:
-                        jj = 0
-                        for index in n_e:# mask out the padded part when computing loss
-                            MSE_train_linear_LOSS[jj] = self.loss_fn(x_out_training_batch[jj,mask,train_lengthMask[index]], train_target_batch[jj,mask,train_lengthMask[index]])
-                            jj += 1
-                        MSE_trainbatch_linear_LOSS = torch.mean(MSE_train_linear_LOSS)
-                    else:
-                        MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_batch[:,mask,:], train_target_batch[:,mask,:])
-                else: # no mask on state
-                    if self.config.randomLength:
-                        jj = 0
-                        for index in n_e:# mask out the padded part when computing loss
-                            MSE_train_linear_LOSS[jj] = self.loss_fn(x_out_training_batch[jj,:,train_lengthMask[index]], train_target_batch[jj,:,train_lengthMask[index]])
-                            jj += 1
-                        MSE_trainbatch_linear_LOSS = torch.mean(MSE_train_linear_LOSS)
-                    else: 
-                        MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_batch, train_target_batch)
+            if self.TRAINING_MODE != Training_Mode.FW_ONLY:
+                # Flip the order (this is needed because each trajectoy has a different length)
+                for id_in_batch,x_out_FW in enumerate(x_out_training_forward_batch):
+                    x_out_training_forward_batch_flipped[id_in_batch,:,:traj_lengths_in_train_batch[id_in_batch]] = torch.flip(x_out_FW[:,:traj_lengths_in_train_batch[id_in_batch]],dims=[1])
+                
+                x_out_training_batch_flipped[:,:,0] = x_out_training_forward_batch_flipped[:,:,0]
+                self.model.InitBackward(torch.unsqueeze(x_out_training_batch_flipped[:, :, 0],2))
+                x_out_training_batch_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 1],2),
+                                                                                filter_x_nexttime = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 0],2)))
+                
+                # Backward Computation; index k happens after k+1. 
+                # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
+                for k in range(2,max_traj_length_in_train_batch):
+                    x_out_training_batch_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, k],2), 
+                                                                                    filter_x_nexttime = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, k-1],2),
+                                                                                    smoother_x_tplus2 = torch.unsqueeze(x_out_training_batch_flipped[:, :, k-2],2)))
+                
+                # Flip back to original order
+                for id_in_batch,x_out_flipped in enumerate(x_out_training_batch_flipped):
+                    x_out_training_batch[id_in_batch,:,:traj_lengths_in_train_batch[id_in_batch]] = torch.flip(x_out_flipped[:,:traj_lengths_in_train_batch[id_in_batch]],dims=[1])
+
+
+
+            #Compute train loss
+            if self.TRAINING_MODE == Training_Mode.FW_ONLY:
+                MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_forward_batch*mask_train, train_target_batch)
+            else:
+                MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_batch, train_target_batch)
 
             # dB Loss
             self.MSE_train_linear_epoch[ti] = MSE_trainbatch_linear_LOSS.item()
@@ -236,65 +259,84 @@ class Pipeline_ERTS:
             self.model.init_hidden()
             with torch.no_grad():
 
-                SysModel.T_test = cv_input.size()[-1] # T_test is the maximum length of the CV sequences
+                force_max_length = torch.inf if self.max_train_sequence_length == -1 else self.max_train_sequence_length
+                traj_lengths_in_CV = torch.tensor([min(force_max_length,traj.traj_length) for traj in cv_set])#torch.tensor([traj.traj_length for traj in train_batch])
+                max_traj_length_in_CV = torch.max(traj_lengths_in_CV)
 
-                x_out_cv_forward_batch = torch.empty([self.CV_set_size, SysModel.space_state_size, SysModel.T_test])
-                x_out_cv_batch = torch.empty([self.CV_set_size, SysModel.space_state_size, SysModel.T_test])
-                
-                # Init Sequence
-                if(randomInit):
-                    if(cv_init==None):
-                        self.model.InitSequence(\
-                        SysModel.m1x_0.reshape(1,SysModel.space_state_size,1).repeat(self.CV_set_size,1,1), SysModel.T_test)
-                    else:
-                        self.model.InitSequence(cv_init, SysModel.T_test)                       
-                else:
-                    self.model.InitSequence(\
-                        SysModel.m1x_0.reshape(1,SysModel.space_state_size,1).repeat(self.CV_set_size,1,1), SysModel.T_test)
+                x_out_cv_forward = torch.zeros([self.CV_set_size, SysModel.space_state_size, max_traj_length_in_CV])
+                x_out_cv_forward_flipped = torch.zeros([self.CV_set_size, SysModel.space_state_size, max_traj_length_in_CV])
+                x_out_cv = torch.zeros([self.CV_set_size, SysModel.space_state_size, max_traj_length_in_CV])
+                x_out_cv_flipped = torch.zeros([self.CV_set_size, SysModel.space_state_size, max_traj_length_in_CV])
+                CV_target = torch.zeros([self.CV_set_size, SysModel.space_state_size, max_traj_length_in_CV])
+                y_CV = torch.zeros([self.CV_set_size, SysModel.observation_vector_size, max_traj_length_in_CV])
+                mask_CV = torch.zeros([self.CV_set_size, SysModel.space_state_size, max_traj_length_in_CV])
 
-                for t in range(0, SysModel.T_test):
-                    x_out_cv_forward_batch[:, :, t] = torch.squeeze(self.model(torch.unsqueeze(cv_input[:, :, t],2), None, None, None))
-                x_out_cv_batch[:, :, SysModel.T_test-1] = x_out_cv_forward_batch[:, :, SysModel.T_test-1] # backward smoothing starts from x_T|T
-                self.model.InitBackward(torch.unsqueeze(x_out_cv_batch[:, :, SysModel.T_test-1],2)) 
-                x_out_cv_batch[:, :, SysModel.T_test-2] = torch.squeeze(self.model(None, \
-                    torch.unsqueeze(x_out_cv_forward_batch[:, :, SysModel.T_test-2],2), torch.unsqueeze(x_out_cv_forward_batch[:, :, SysModel.T_test-1],2),None))
-                for t in range(SysModel.T_test-3, -1, -1):
-                    x_out_cv_batch[:, :, t] = torch.squeeze(self.model(None, \
-                        torch.unsqueeze(x_out_cv_forward_batch[:,:, t],2), torch.unsqueeze(x_out_cv_forward_batch[:,:, t+1],2),torch.unsqueeze(x_out_cv_batch[:,:, t+2],2)))                      
+
+
+                M1_0 = []
+                for ii,traj in enumerate(cv_set):
+                    y_CV[ii,:,:traj_lengths_in_CV[ii]]      = traj.y[:,:traj_lengths_in_CV[ii]]
+                    CV_target[ii,:,:traj_lengths_in_CV[ii]] = traj.x_real[:,:traj_lengths_in_CV[ii]]
+                    mask_CV[ii,:,:traj_lengths_in_CV[ii]] = 1
+                    m1_0_real,para_real = get_mx_0(cv_set[ii].x_real)
+                    m1_0_noisy,para_noisy= get_mx_0(cv_set[ii].y,forced_phi=para_real['initial_phi'])
+                    M1_0.append(m1_0_noisy.unsqueeze(0))
+
+                M1_0 = torch.cat(M1_0,dim=0)
+                x_out_cv_forward[:, :, 0] = M1_0
+                self.model.InitSequence(M1_0.unsqueeze(-1),max_traj_length_in_CV)
+
+                # Forward Computation
+                for t in range(1, max_traj_length_in_CV):
+                    x_out_cv_forward[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_CV[:, :, t],2)))
+
+                if self.TRAINING_MODE != Training_Mode.FW_ONLY:
+                    # Flip the order (this is needed because each trajectoy has a different length)
+                    for id,x_out_FW in enumerate(x_out_cv_forward):
+                        x_out_cv_forward_flipped[id,:,:traj_lengths_in_CV[id]] = torch.flip(x_out_FW[:,:traj_lengths_in_CV[id]],dims=[1])
+
+                    x_out_cv_flipped[:,:,0] = x_out_cv_forward_flipped[:,:,0]
+                    self.model.InitBackward(torch.unsqueeze(x_out_cv_flipped[:, :, 0],2))
+                    x_out_cv_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_cv_forward_flipped[:, :, 1],2),
+                                                                                    filter_x_nexttime = torch.unsqueeze(x_out_cv_forward_flipped[:, :, 0],2)))  
+
+                    # Backward Computation; index k happens after k+1. 
+                    # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
+                    for k in range(2,max_traj_length_in_CV):
+                        x_out_cv_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_cv_forward_flipped[:, :, k],2), 
+                                                                                    filter_x_nexttime = torch.unsqueeze(x_out_cv_forward_flipped[:, :, k-1],2),
+                                                                                    smoother_x_tplus2 = torch.unsqueeze(x_out_cv_flipped[:, :, k-2],2)))
+                    # Flip back to original order
+                    for id,x_out_flipped in enumerate(x_out_cv_flipped):
+                        x_out_cv[id,:,:traj_lengths_in_CV[id]] = torch.flip(x_out_flipped[:,:traj_lengths_in_CV[id]],dims=[1])
+
 
                 # Compute CV Loss
-                MSE_cvbatch_linear_LOSS = 0
-                if(MaskOnState):
-                    if self.args.randomLength:
-                        for index in range(self.CV_set_size):
-                            MSE_cv_linear_LOSS[index] = self.loss_fn(x_out_cv_batch[index,mask,cv_lengthMask[index]], cv_target[index,mask,cv_lengthMask[index]])
-                        MSE_cvbatch_linear_LOSS = torch.mean(MSE_cv_linear_LOSS)
-                    else:          
-                        MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv_batch[:,mask,:], cv_target[:,mask,:])
+                if self.TRAINING_MODE == Training_Mode.FW_ONLY:
+                    MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv_forward * mask_CV, CV_target)
                 else:
-                    if self.args.randomLength:
-                        for index in range(self.CV_set_size):
-                            MSE_cv_linear_LOSS[index] = self.loss_fn(x_out_cv_batch[index,:,cv_lengthMask[index]], cv_target[index,:,cv_lengthMask[index]])
-                        MSE_cvbatch_linear_LOSS = torch.mean(MSE_cv_linear_LOSS)
-                    else:
-                        MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv_batch, cv_target)
+                    MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv, CV_target)
 
                 # dB Loss
                 self.MSE_cv_linear_epoch[ti] = MSE_cvbatch_linear_LOSS.item()
                 self.MSE_cv_dB_epoch[ti] = 10 * torch.log10(self.MSE_cv_linear_epoch[ti])
                 
-                if (self.MSE_cv_dB_epoch[ti] < self.MSE_cv_dB_opt):
+                if (self.MSE_cv_dB_epoch[ti] < self.MSE_cv_dB_opt or ti==0):
                     self.MSE_cv_dB_opt = self.MSE_cv_dB_epoch[ti]
                     self.MSE_cv_idx_opt = ti
                     
-                    # torch.save(self.model, path_results + 'best-model.pt')
-                    torch.save(self.model.state_dict(), path_results + 'best-model-weights.pt')
+                    torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
+                    if int(self.current_phase) == self.total_num_phases-1:
+                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt"))
 
+                cv_set[0].x_estimated_FW = x_out_cv_forward[0]
+ 
+            
 
             ########################
             ### Training Summary ###
             ########################
-            print(ti, "MSE Training :", self.MSE_train_dB_epoch[ti], "[dB]", "MSE Validation :", self.MSE_cv_dB_epoch[ti],
+            print(f"P{self.current_phase}",ti, "MSE Training :", self.MSE_train_dB_epoch[ti], "[dB]", "MSE Validation :", self.MSE_cv_dB_epoch[ti],
                   "[dB]")
             
             
@@ -305,17 +347,55 @@ class Pipeline_ERTS:
 
             print("Optimal idx:", self.MSE_cv_idx_opt, "Optimal :", self.MSE_cv_dB_opt, "[dB]")
 
+        self.plot_training_summary()
         return [self.MSE_cv_linear_epoch, self.MSE_cv_dB_epoch, self.MSE_train_linear_epoch, self.MSE_train_dB_epoch]
 
-    def NNTest(self, SysModel, test_input, test_target, path_results, MaskOnState=False,\
+    def plot_training_summary(self):
+        self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
+        self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
+        self.phase_change_epochs.append(self.num_epochs)
+
+        plt.figure()
+        plt.plot(range(len(self.MSE_train_dB_epoch)),self.MSE_train_dB_epoch,label='Train loss',linewidth=0.5)
+        plt.plot(range(len(self.MSE_cv_dB_epoch)),self.MSE_cv_dB_epoch,label='CV loss',linewidth=0.8,linestyle='--')
+        plt.scatter(self.MSE_cv_opt_id_phase[:int(self.current_phase) + 1], self.MSE_cv_opt_dB_phase[:int(self.current_phase)+1], color='green', marker='o',s=10,label='Opt MSE')  # Mark specific points
+        # Mark best MSE in each phase
+        # for i in range(int(self.current_phase)+1):
+        #     plt.text((self.phase_change_epochs[i] + self.phase_change_epochs[i+1])/2 - 10, plt.gca().get_ylim()[1] + 0.5, f'Opt MSE {round(self.MSE_cv_opt_dB_phase[i].item(),2)})', fontsize=10)
+        # Mark Phase switches
+        for epoch in self.phase_change_epochs:
+            plt.axvline(x=epoch, color='red', linestyle='--',linewidth=0.7)
+        for phase_id,epoch in enumerate(self.phase_change_epochs):
+            plt.text(epoch, plt.gca().get_ylim()[1] + 0.5, f'P{phase_id}', ha='center')
+
+        plt.xlabel("Epoch")
+        plt.ylabel('MSE [dB]')
+        plt.title("Training Losses", y=1.08)
+        plt.legend()
+
+
+        plt.show()
+
+    def NNTest(self, SysModel, test_set, MaskOnState=False,\
      randomInit=False,test_init=None,load_model=False,load_model_path=None,\
         test_lengthMask=None):
 
-        self.N_T = test_input.shape[0]
-        SysModel.T_test = test_input.size()[-1]
-        self.MSE_test_linear_arr = torch.zeros([self.N_T])
-        x_out_test_forward_batch = torch.zeros([self.N_T, SysModel.space_state_size, SysModel.T_test])
-        x_out_test = torch.zeros([self.N_T, SysModel.space_state_size,SysModel.T_test])
+        self.test_set_size = self.model.batch_size = len(test_set)
+
+        traj_lengths_in_test = torch.tensor([traj.traj_length for traj in test_set])
+        max_traj_length_in_test = torch.max(traj_lengths_in_test)
+
+        x_out_test_forward         = torch.zeros([self.test_set_size, SysModel.space_state_size, max_traj_length_in_test])
+        x_out_test_forward_flipped = torch.zeros([self.test_set_size, SysModel.space_state_size, max_traj_length_in_test])
+        x_out_test                 = torch.zeros([self.test_set_size, SysModel.space_state_size,max_traj_length_in_test])
+        x_out_test_flipped         = torch.zeros([self.test_set_size, SysModel.space_state_size,max_traj_length_in_test])
+        test_target                = torch.zeros([self.test_set_size, SysModel.space_state_size,max_traj_length_in_test])
+        y_test                     = torch.zeros([self.test_set_size, SysModel.observation_vector_size,max_traj_length_in_test])
+        mask_test                  = torch.zeros([self.test_set_size, SysModel.space_state_size, max_traj_length_in_test])
+        
+        self.MSE_test_linear_arr = torch.zeros([self.test_set_size])
+
+        self.MSE_test_linear_arr = torch.zeros([self.test_set_size])
 
         if MaskOnState:
             mask = torch.tensor([True,False,False])
@@ -334,47 +414,67 @@ class Pipeline_ERTS:
         if load_model:
             model_weights = torch.load(load_model_path, map_location=self.device) 
         else:
-            model_weights = torch.load(path_results+'best-model-weights.pt', map_location=self.device) 
+            model_weights = torch.load(os.path.join(self.config.path_results,f'best-model-weights_FINAL.pt'), map_location=self.device) 
         # Set the loaded weights to the model
         self.model.load_state_dict(model_weights)
 
         # Test mode
         self.model.eval()
-        self.model.batch_size = self.N_T
         # Init Hidden State
         self.model.init_hidden()
         torch.no_grad()
 
         start = time.time()
 
-        if (randomInit):
-            self.model.InitSequence(test_init, SysModel.T_test)               
-        else:
-            self.model.InitSequence(SysModel.m1x_0.reshape(1,SysModel.space_state_size,1).repeat(self.N_T,1,1), SysModel.T_test)         
-        
-        for t in range(0, SysModel.T_test):
-            x_out_test_forward_batch[:,:, t] = torch.squeeze(self.model(torch.unsqueeze(test_input[:,:, t],2), None, None, None))
-        x_out_test[:,:, SysModel.T_test-1] = x_out_test_forward_batch[:,:, SysModel.T_test-1] # backward smoothing starts from x_T|T 
-        self.model.InitBackward(torch.unsqueeze(x_out_test[:,:, SysModel.T_test-1],2)) 
-        x_out_test[:,:, SysModel.T_test-2] = torch.squeeze(self.model(None, torch.unsqueeze(x_out_test_forward_batch[:,:, SysModel.T_test-2],2), torch.unsqueeze(x_out_test_forward_batch[:,:, SysModel.T_test-1],2),None))
-        for t in range(SysModel.T_test-3, -1, -1):
-            x_out_test[:,:, t] = torch.squeeze(self.model(None, torch.unsqueeze(x_out_test_forward_batch[:,:, t],2), torch.unsqueeze(x_out_test_forward_batch[:,:, t+1],2),torch.unsqueeze(x_out_test[:,:, t+2],2)))
-        
+        M1_0 = []
+        for ii,traj in enumerate(test_set):
+            y_test[ii,:,:traj.traj_length]      = traj.y[:,:traj.traj_length]
+            test_target[ii,:,:traj.traj_length] = traj.x_real[:,:traj.traj_length]
+            mask_test[ii,:,:traj.traj_length]   = 1
+            m1_0_real,para_real = get_mx_0(test_set[ii].x_real)
+            m1_0_noisy,para_noisy= get_mx_0(test_set[ii].y,forced_phi=para_real['initial_phi'])
+            M1_0.append(m1_0_noisy.unsqueeze(0))
+
+        M1_0 = torch.cat(M1_0,dim=0)
+        x_out_test_forward[:, :, 0] = M1_0
+        self.model.InitSequence(M1_0.unsqueeze(-1),max_traj_length_in_test)
+
+
+        # Forward Computation
+        for t in range(0, max_traj_length_in_test):
+            x_out_test_forward[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_test[:, :, t],2)))
+
+        if self.TRAINING_MODE !=Training_Mode.FW_ONLY:
+            # Flip the order (this is needed because each trajectoy has a different length)
+            for id,x_out_FW in enumerate(x_out_test_forward):
+                x_out_test_forward_flipped[id,:,:traj_lengths_in_test[id]] = torch.flip(x_out_FW[:,:traj_lengths_in_test[id]],dims=[1])
+
+            x_out_test_flipped[:,:,0] = x_out_test_forward_flipped[:,:,0]
+            self.model.InitBackward(torch.unsqueeze(x_out_test_flipped[:, :, 0],2))
+            x_out_test_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_test_forward_flipped[:, :, 1],2),
+                                                                filter_x_nexttime = torch.unsqueeze(x_out_test_forward_flipped[:, :, 0],2)))  
+
+            # Backward Computation; index k happens after k+1. 
+            # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
+            for k in range(2,max_traj_length_in_test):
+                x_out_test_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_test_forward_flipped[:, :, k],2), 
+                                                                    filter_x_nexttime = torch.unsqueeze(x_out_test_forward_flipped[:, :, k-1],2),
+                                                                    smoother_x_tplus2 = torch.unsqueeze(x_out_test_flipped[:, :, k-2],2)))
+
+            # Flip back to original order
+            for id,x_out_flipped in enumerate(x_out_test_flipped):
+                x_out_test[id,:,:traj_lengths_in_test[id]] = torch.flip(x_out_flipped[:,:traj_lengths_in_test[id]],dims=[1])
+
+
         end = time.time()
         t = end - start
 
         # MSE loss
-        for j in range(self.N_T):
-            if(MaskOnState):
-                if self.args.randomLength:
-                    self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,mask,test_lengthMask[j]], test_target[j,mask,test_lengthMask[j]]).item()
-                else:
-                    self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,mask,:], test_target[j,mask,:]).item()
+        for j in range(self.test_set_size ):
+            if self.TRAINING_MODE ==Training_Mode.FW_ONLY:
+                self.MSE_test_linear_arr[j] = loss_fn(x_out_test_forward[j,:,:] * mask_test[j,:,:], test_target[j,:,:]).item()
             else:
-                if self.args.randomLength:
-                    self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,:,test_lengthMask[j]], test_target[j,:,test_lengthMask[j]]).item()
-                else:
-                    self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,:,:], test_target[j,:,:]).item()
+                self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,:,:], test_target[j,:,:]).item()
         
         # Average
         self.MSE_test_linear_avg = torch.mean(self.MSE_test_linear_arr)
@@ -400,7 +500,7 @@ class Pipeline_ERTS:
     
         self.Plot = Plot(self.folderName, self.modelName)
 
-        self.Plot.NNPlot_epochs(self.train_set_size,self.num_epochs, self.batch_size, MSE_KF_dB_avg, MSE_RTS_dB_avg,
+        self.Plot.NNPlot_epochs(self.train_set_size,self.num_epochs, self.test_set_size, MSE_KF_dB_avg, MSE_RTS_dB_avg,
                                 self.MSE_test_dB_avg, self.MSE_cv_dB_epoch, self.MSE_train_dB_epoch)
 
         self.Plot.NNPlot_Hist(MSE_KF_linear_arr, MSE_RTS_linear_arr, self.MSE_test_linear_arr)

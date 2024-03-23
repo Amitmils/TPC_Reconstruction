@@ -37,8 +37,7 @@ print("Current Time =", strTime)
 ##########################
 ### Parameter settings ###
 ##########################
-system_config= CONFIG("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/config.json")
-args = config.general_settings()
+system_config= CONFIG("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/config.yaml")
 system_config.use_cuda = False # use GPU or not
 if system_config.use_cuda:
    if torch.cuda.is_available():
@@ -59,20 +58,16 @@ chop = False # whether to chop data sequences into shorter sequences
 # only 'full' for data size case
 switch = 'full'
 # specify the path to save trained pass1 model
-RTSNetPass1_path = "Simulations/Particle_Tracking/results/best-model-weights.pt"
+RTSNetPass1_path = os.path.join(system_config.path_results,"best-model-weights.pt")
 
-### training parameters ##################################################
-args.n_steps = 2000
-args.n_batch = min(30, args.N_E)
-args.lr = 1e-3
-args.wd = 1e-3
+
 path_results = 'RTSNet/'
 
 # 1pass or 2pass
 two_pass = False # if true: use two pass method, else: use one pass method
 
 load_trained_pass1 = False # if True: load trained RTSNet pass1, else train pass1
-# Save the dataset generated from testing RTSNet1 on train and CV data
+# Save the dataset generated from testing RTSNet1 on train and`` CV data
 load_dataset_for_pass2 = False # if True: load dataset generated from testing RTSNet1 on train and CV data
 # Specify the path to save the dataset
 DatasetPass1_path = "Simulations/Lorenz_Atractor/data/T100_Hrot1/2ndPass/partial/ResultofPass1_rq1030partial.pt" 
@@ -86,27 +81,28 @@ print(f"Data Load : {os.path.basename(system_config.Dataset_path)}")
 [train_set,CV_set, test_set] =  torch.load(system_config.Dataset_path)
  
 
+
+
 #Extract Relevant Data on the Trajectories
 system_config.delta_t = train_set[0].delta_t
 system_config.data_source = train_set[0].data_src
 
+if system_config.data_source == Trajectory_Source.Amit_Simulated:
+   train_set = add_noise_to_list_of_trajectories(train_set,mean=system_config.added_noise_mean,variance=system_config.added_noise_var)
+   CV_set = add_noise_to_list_of_trajectories(CV_set,mean=system_config.added_noise_mean,variance=system_config.added_noise_var)
+   test_set = add_noise_to_list_of_trajectories(test_set,mean=system_config.added_noise_mean,variance=system_config.added_noise_var)
 
 
-train_set = train_set[:min(len(train_set),system_config.train_set_size)]
-CV_set = CV_set[:min(len(CV_set),system_config.CV_set_size)]
-test_set = CV_set[:min(len(test_set),system_config.test_set_size)]
 
 
-# if chop: 
-#    print("chop training data")    
-#    [train_target, train_input, train_init] = Short_Traj_Split(train_target_long, train_input_long, args.T)
-#    # [cv_target, cv_input] = Short_Traj_Split(cv_target, cv_input, args.T)
-# else:
-#    print("no chopping") 
-#    train_target = train_target_long[:,:,0:args.T]
-#    train_input = train_input_long[:,:,0:args.T] 
-#    # cv_target = cv_target[:,:,0:args.T]
-#    # cv_input = cv_input[:,:,0:args.T]  
+#We can set a smaller set in config
+system_config.train_set_size = min(len(train_set),system_config.train_set_size)
+system_config.CV_set_size = min(len(CV_set),system_config.CV_set_size)
+system_config.test_set_size = min(len(test_set),system_config.test_set_size)
+
+train_set = train_set[:system_config.train_set_size]
+CV_set = CV_set[:system_config.CV_set_size]
+test_set = CV_set[:system_config.test_set_size]
 
 print("trainset size:",len(train_set))
 print("cvset size:",len(CV_set))
@@ -169,13 +165,11 @@ else:
    RTSNet_Pipeline.setssModel(sys_model)
    RTSNet_Pipeline.setModel(RTSNet_model)
    print("Number of trainable parameters for RTSNet:",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
-   RTSNet_Pipeline.setTrainingParams() 
-   if(chop):
-      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set, path_results,randomInit=True,train_init=train_init)
-   else:
-      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set, path_results)
+   RTSNet_Pipeline.setTrainingParams()    
+   if system_config.train == True:
+      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set)
    ## Test Neural Network
-   [MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,rtsnet_out,RunTime] = RTSNet_Pipeline.NNTest(sys_model,test_set, path_results)
+   [MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,rtsnet_out,RunTime] = RTSNet_Pipeline.NNTest(sys_model,test_set)
    # Save trained model
    torch.save(RTSNet_Pipeline.model.state_dict(), RTSNetPass1_path)
 ####################################################################################

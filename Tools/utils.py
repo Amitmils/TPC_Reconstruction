@@ -9,6 +9,7 @@ import enum
 from typing import List
 from datetime import datetime
 import json
+import yaml
 from skimage.measure import CircleModel,LineModelND, ransac
 from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
@@ -25,6 +26,11 @@ class SS_VARIABLE(enum.Enum):
     Px = 3
     Py = 4
     Pz = 5
+
+class Training_Mode(enum.Enum):
+    FW_ONLY = "FW"
+    BW_ONLY = "BW"
+    FW_BW= "FW + BW"
 
 class Trajectory_Source(enum.Enum):
     Amit_Simulated = 0
@@ -57,8 +63,13 @@ class CONFIG():
     def __init__(self,config_path) -> None:
         self.parse_config(config_path)
     def parse_config(self,config_path):
+        ext = config_path.split('.')[-1]
+        assert ext == 'json' or ext == 'yaml', "Format Not Supported!"
         with open(config_path, 'r') as f:
-            data = json.load(f)
+            if ext == 'yaml':
+                data = yaml.safe_load(f)
+            elif ext == 'json':
+                data = json.load(f)
         for key,value in data.items():
             setattr(self,key,value)
         return data
@@ -99,16 +110,20 @@ class Trajectory():
 
     def traj_plots(self,SS_to_plot : List[Trajectory_SS_Type],show=True,save=False,output_path=None):
         space_state_vector_list = []
+        space_state_vector_list_velo = []
         energy_list = []
         for traj_ss_type in SS_to_plot:
             if traj_ss_type == Trajectory_SS_Type.Real:
                 space_state_vector_list.append(self.x_real)
+                space_state_vector_list_velo.append(self.x_real)
                 energy_list.append(self.real_energy)
             elif traj_ss_type == Trajectory_SS_Type.Estimated_FW:
                 space_state_vector_list.append(self.x_estimated_FW)
+                space_state_vector_list_velo.append(self.x_estimated_FW)
                 energy_list.append(self.energy_estimated_FW)
             elif traj_ss_type == Trajectory_SS_Type.Estimated_BW:
                 space_state_vector_list.append(self.x_estimated_BW)
+                space_state_vector_list_velo.append(self.x_estimated_BW)
                 energy_list.append(self.energy_estimated_BW)
             elif traj_ss_type == Trajectory_SS_Type.Observed:
                 space_state_vector_list.append(self.y)
@@ -123,21 +138,21 @@ class Trajectory():
         ax.set_zlabel('Z')
         ax.set_title('3D Trajectory')
 
-        fig, axs = plt.subplots(2)  # 2 rows of subplots
-        for space_state_vector in space_state_vector_list:
-            axs[0].plot(space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}')
-            axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
-            axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
-        axs[0].set_title(f"{'Momentums' if self.momentum_ss else 'Velocities'} Over Time")
-        axs[0].set_ylabel(f"{'Momentums [GeV/c]' if self.momentum_ss else 'Velocity [m/s]'}")
-        axs[0].set_xticks([])
-        axs[0].legend()
-        for i,energy in enumerate(energy_list):
-            axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
-        axs[1].set_title('Kinetic Energy Over Time')
-        axs[1].set_xlabel('Time [s]')
-        axs[1].set_ylabel('Energy [MeV]')
-        axs[1].legend()
+        # fig, axs = plt.subplots(2)  # 2 rows of subplots
+        # for space_state_vector in space_state_vector_list_velo:
+        #     axs[0].plot(space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}')
+        #     axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
+        #     axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
+        # axs[0].set_title(f"{'Momentums' if self.momentum_ss else 'Velocities'} Over Time")
+        # axs[0].set_ylabel(f"{'Momentums [GeV/c]' if self.momentum_ss else 'Velocity [m/s]'}")
+        # axs[0].set_xticks([])
+        # axs[0].legend()
+        # for i,energy in enumerate(energy_list):
+        #     axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
+        # axs[1].set_title('Kinetic Energy Over Time')
+        # axs[1].set_xlabel('Time [s]')
+        # axs[1].set_ylabel('Energy [MeV]')
+        # axs[1].legend()
         if show:
             plt.show()
 
@@ -196,7 +211,7 @@ class Traj_Generator():
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.vx[i],self.vy[i],self.vz[i])
             distance_from_z_axis = torch.sqrt(self.x[i]**2 + self.y[i])
-            if distance_from_z_axis >= CHAMBER_RADIUS:
+            if distance_from_z_axis >= CHAMBER_RADIUS and i>2:
                 break
             i+=1
 
@@ -216,6 +231,16 @@ class Traj_Generator():
         traj = Trajectory(real_traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
         get_mx_0(traj.x_real)
         return traj
+    
+def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
+    for traj in traj_list:
+        #zero mean 1 variance
+        gaussian_noise_normal = torch.randn(traj.y.shape[0], traj.y.shape[1])
+        gaussian_noise = mean + torch.sqrt(torch.tensor(variance)) * gaussian_noise_normal
+        traj.y += gaussian_noise
+    return traj_list
+    
+
 
 def get_energy_from_brho(brho):
     '''
@@ -244,7 +269,7 @@ def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
 
 
 
-def get_mx_0(traj_coordinates):
+def get_mx_0(traj_coordinates,forced_phi=None):
     mx_0 = torch.zeros(6) #Size of state vector is 6x1
     x = traj_coordinates[SS_VARIABLE.X.value,:]
     y = traj_coordinates[SS_VARIABLE.Y.value,:]
@@ -257,8 +282,6 @@ def get_mx_0(traj_coordinates):
     y_center = model.params[1] 
     init_radius = model.params[2] * CM__TO__M
     # plot_circle_with_fit(x_center * CM__TO__M,y_center * CM__TO__M,init_radius,x * CM__TO__M,y* CM__TO__M)
-
-
 
 
     y_from_center = y - y_center
@@ -276,12 +299,19 @@ def get_mx_0(traj_coordinates):
 
     ## Init Angles ##
     init_theta = torch.arccos(vector[1])
-    init_phi = torch.arctan2(y[1]-y[0],x[1]-x[0])
+    init_phi= torch.arctan2(y[1]-y[0],x[1]-x[0]) if forced_phi == None else forced_phi
+
 
 
     ### Init Energy ###
     brho = init_radius * B / np.sin(init_theta)
     init_energy,init_p = get_energy_from_brho(brho)
+
+    estimated_parameters = {
+        "inital_theta" : init_theta,
+        "initial_phi" : init_phi,
+        "init_radius" : init_radius
+    }
 
     mx_0[SS_VARIABLE.X.value] = x[0]
     mx_0[SS_VARIABLE.Y.value] = y[0]
@@ -289,7 +319,7 @@ def get_mx_0(traj_coordinates):
     mx_0[SS_VARIABLE.Vx.value] = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * np.cos(init_phi)
     mx_0[SS_VARIABLE.Vy.value] = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * np.sin(init_phi)
     mx_0[SS_VARIABLE.Vz.value] = convert_momentum_to_velocity(init_p) * np.cos(init_theta)
-    return mx_0
+    return mx_0,estimated_parameters
 
 
 
@@ -343,7 +373,7 @@ def get_vel_deriv(vx,vy,vz,direction):
     temp_vx = vx * CM_NS__TO__M_S
     temp_vy = vy * CM_NS__TO__M_S
     temp_vz = vz * CM_NS__TO__M_S
-    deaccel = get_deacceleration(energy)
+    deaccel = get_deacceleration(energy) * 0
     Bx = 0
     By = 0
     Bz = B
@@ -474,7 +504,7 @@ def f(state_space_vector_prev,delta_t):
     y = y + (delta_t/6) * (k1y + 2*k2y + 2*k3y + k4y)
     z = z + (delta_t/6) * (k1z + 2*k2z + 2*k3z + k4z)
 
-    state_space_vector_curr = torch.cat((x,y,z,vx,vy,vz),dim=1).unsqueeze(-1)
+    state_space_vector_curr = torch.cat((x.reshape(-1,1),y.reshape(-1,1),z.reshape(-1,1),vx.reshape(-1,1),vy.reshape(-1,1),vz.reshape(-1,1)),dim=1).unsqueeze(-1)
     return state_space_vector_curr
 
 def h(space_state_vector):
@@ -536,14 +566,29 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
     CV_set =  Dataset[:N_CV]
     test_set = Dataset[N_CV:]
     torch.save([training_set,CV_set,test_set], os.path.join(output_dir,f'{dataset_name}.pt'))
+
+def test():
+    #Check that f works like the same with 1 and N batches
+    [train_set,CV_set, test_set] =  torch.load(r"/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/data/dataset_14_03_24__21_49.pt")
+    min_traj_length = min([traj.traj_length for traj in train_set])
+    batch_size = len(train_set)
+    space_vectors = torch.zeros([batch_size, train_set[0].x_real.shape[0], min_traj_length])
+    for i in range(batch_size):
+        space_vectors[i,:,:min_traj_length] = train_set[i].x_real[:,:min_traj_length]
+    for i in range(min_traj_length-1):
+        propagation = f(space_vectors[:,:,i],train_set[0].delta_t)
+        true = space_vectors[:,:,i+1].unsqueeze(-1)
+        if torch.eq(torch.round(true*100)/100,torch.round(propagation*100)/100).all().item() != True:
+            print("ERROR")
     
 
 if __name__ == "__main__":
-    generate_dataset(N_Train=150,N_CV=25,N_Test=25)
+    generate_dataset(N_Train=150,N_CV=25,N_Test=25,dataset_name="No_Deaccel")
     # gen = Traj_Generator()
     # traj = gen.generate(energy=12,theta=1,phi=0)
     # traj.traj_plots([Trajectory_SS_Type.Real])
     # df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
     # df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)
-
     # gen.save_csv(traj_data)
+
+
