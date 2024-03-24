@@ -9,7 +9,7 @@ import time
 import random
 import numpy as np
 from Plot import Plot_extended as Plot
-from Tools.utils import get_mx_0,Training_Mode,Trajectory_SS_Type
+from Tools.utils import get_mx_0,System_Mode,Trajectory_SS_Type
 import os
 import matplotlib.pyplot as plt
 
@@ -56,7 +56,7 @@ class Pipeline_ERTS:
         self.num_epochs_in_phase = self.config.training_scheduler[self.current_phase]["n_epochs"]
         self.next_phase_change = self.num_epochs_in_phase # Which epoch to change to next phase
         self.max_train_sequence_length = self.config.training_scheduler[self.current_phase]["max_train_sequence_length"]
-        self.TRAINING_MODE = Training_Mode(self.config.training_scheduler[self.current_phase]["mode"])
+        self.TRAINING_MODE = System_Mode(self.config.training_scheduler[self.current_phase]["mode"])
         self.phase_modes = [self.TRAINING_MODE.value] #For visualization - set first mode type
 
         self.weightDecay = self.config.wd # L2 Weight Regularization - Weight Decay
@@ -79,17 +79,17 @@ class Pipeline_ERTS:
         # the model for us. Here we will use Adam; the optim package contains many other
         # optimization algoriths. The first argument to the Adam constructor tells the
         # optimizer which Tensors it should update.
-        if self.TRAINING_MODE == Training_Mode.FW_BW:
+        if self.TRAINING_MODE == System_Mode.FW_BW:
             self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learningRate, weight_decay=self.weightDecay)
-        elif self.TRAINING_MODE == Training_Mode.FW_ONLY:
+        elif self.TRAINING_MODE == System_Mode.FW_ONLY:
             self.optimizer = torch.optim.Adam(self.model.KNET_params, lr=self.learningRate, weight_decay=self.weightDecay)
-        elif self.TRAINING_MODE == Training_Mode.BW_ONLY:
+        elif self.TRAINING_MODE == System_Mode.BW_ONLY:
             self.optimizer = torch.optim.Adam(self.model.RTSNET_params, lr=self.learningRate, weight_decay=self.weightDecay)
 
     def update_training_mode(self):
         new_training_mode = self.config.training_scheduler[self.current_phase]["mode"]
         current_training_mode = self.TRAINING_MODE
-        self.TRAINING_MODE = Training_Mode(new_training_mode)
+        self.TRAINING_MODE = System_Mode(new_training_mode)
         if new_training_mode != current_training_mode:
             self.set_optimizer()
         
@@ -117,9 +117,7 @@ class Pipeline_ERTS:
               f"Mode : {self.TRAINING_MODE.value}\n\n"
               "########################################\n")
 
-    def NNTrain(self, SysModel, train_set, cv_set, \
-        MaskOnState=False, randomInit=False,cv_init=None,train_init=None,\
-        train_lengthMask=None,cv_lengthMask=None):
+    def NNTrain(self, SysModel, train_set, cv_set):
 
         ### Optional: start training from previous checkpoint
         # model_weights = torch.load(path_results+'best-model-weights.pt', map_location=self.device) 
@@ -138,18 +136,14 @@ class Pipeline_ERTS:
 
         self.MSE_train_linear_epoch = torch.zeros([self.num_epochs])
         self.MSE_train_dB_epoch = torch.zeros([self.num_epochs])
-        
-        if MaskOnState:
-            mask = torch.tensor([True,False,False])
-            if SysModel.space_state_size == 2: 
-                mask = torch.tensor([True,False])
+
 
         ##############
         ### Epochs ###
         ##############
 
         self.MSE_cv_dB_opt = 1000
-        self.MSE_cv_idx_opt = 0
+        self.MSE_cv_idx_opt = 0     
 
         for ti in range(0, self.num_epochs):
 
@@ -214,16 +208,16 @@ class Pipeline_ERTS:
                 x_out_training_forward_batch[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_training_batch[:, :, t],2)))
 
 
-            if self.TRAINING_MODE != Training_Mode.FW_ONLY:
+            if self.TRAINING_MODE != System_Mode.FW_ONLY:
                 # Flip the order (this is needed because each trajectoy has a different length)
                 for id_in_batch,x_out_FW in enumerate(x_out_training_forward_batch):
                     x_out_training_forward_batch_flipped[id_in_batch,:,:traj_lengths_in_train_batch[id_in_batch]] = torch.flip(x_out_FW[:,:traj_lengths_in_train_batch[id_in_batch]],dims=[1])
-                
+
                 x_out_training_batch_flipped[:,:,0] = x_out_training_forward_batch_flipped[:,:,0]
                 self.model.InitBackward(torch.unsqueeze(x_out_training_batch_flipped[:, :, 0],2))
                 x_out_training_batch_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 1],2),
                                                                                 filter_x_nexttime = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, 0],2)))
-                
+
                 # Backward Computation; index k happens after k+1. 
                 # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
                 for k in range(2,max_traj_length_in_train_batch):
@@ -233,7 +227,7 @@ class Pipeline_ERTS:
                 # Flip back to original order
                 for id_in_batch,x_out_flipped in enumerate(x_out_training_batch_flipped):
                     x_out_training_batch[id_in_batch,:,:traj_lengths_in_train_batch[id_in_batch]] = torch.flip(x_out_flipped[:,:traj_lengths_in_train_batch[id_in_batch]],dims=[1])
-            
+
             train_batch[0].x_estimated_BW = x_out_training_batch[0].clone().detach()
             train_batch[0].x_estimated_FW = x_out_training_forward_batch[0].clone().detach()
             # train_batch[0].traj_plots([Trajectory_SS_Type.Estimated_BW,Trajectory_SS_Type.Estimated_FW,Trajectory_SS_Type.Real])
@@ -241,7 +235,7 @@ class Pipeline_ERTS:
 
 
             #Compute train loss
-            if self.TRAINING_MODE == Training_Mode.FW_ONLY:
+            if self.TRAINING_MODE == System_Mode.FW_ONLY:
                 MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_forward_batch * mask_train, train_target_batch)
             else:
                 MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_batch * mask_train, train_target_batch)
@@ -292,8 +286,6 @@ class Pipeline_ERTS:
                 y_CV = torch.zeros([self.CV_set_size, SysModel.observation_vector_size, max_traj_length_in_CV])
                 mask_CV = torch.zeros([self.CV_set_size, SysModel.space_state_size, max_traj_length_in_CV])
 
-
-
                 M1_0 = []
                 for ii,traj in enumerate(cv_set):
                     y_CV[ii,:,:traj_lengths_in_CV[ii]]      = traj.y[:,:traj_lengths_in_CV[ii]]
@@ -311,7 +303,7 @@ class Pipeline_ERTS:
                 for t in range(1, max_traj_length_in_CV):
                     x_out_cv_forward[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_CV[:, :, t],2)))
 
-                if self.TRAINING_MODE != Training_Mode.FW_ONLY:
+                if self.TRAINING_MODE != System_Mode.FW_ONLY:
                     # Flip the order (this is needed because each trajectoy has a different length)
                     for id,x_out_FW in enumerate(x_out_cv_forward):
                         x_out_cv_forward_flipped[id,:,:traj_lengths_in_CV[id]] = torch.flip(x_out_FW[:,:traj_lengths_in_CV[id]],dims=[1])
@@ -333,7 +325,7 @@ class Pipeline_ERTS:
 
 
                 # Compute CV Loss
-                if self.TRAINING_MODE == Training_Mode.FW_ONLY:
+                if self.TRAINING_MODE == System_Mode.FW_ONLY:
                     MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv_forward * mask_CV, CV_target)
                 else:
                     MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv * mask_CV,CV_target)
@@ -341,26 +333,22 @@ class Pipeline_ERTS:
                 # dB Loss
                 self.MSE_cv_linear_epoch[ti] = MSE_cvbatch_linear_LOSS.item()
                 self.MSE_cv_dB_epoch[ti] = 10 * torch.log10(self.MSE_cv_linear_epoch[ti])
-                
+
                 if (self.MSE_cv_dB_epoch[ti] < self.MSE_cv_dB_opt or ti==0):
                     self.MSE_cv_dB_opt = self.MSE_cv_dB_epoch[ti]
                     self.MSE_cv_idx_opt = ti
                     
                     torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
                     if int(self.current_phase) == self.total_num_phases-1:
-                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt"))
+                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt")) 
 
-                cv_set[0].x_estimated_FW = x_out_cv_forward[0]
- 
-            
 
             ########################
             ### Training Summary ###
             ########################
             print(f"P{self.current_phase}",ti, "MSE Training :", self.MSE_train_dB_epoch[ti], "[dB]", "MSE Validation :", self.MSE_cv_dB_epoch[ti],
                   "[dB]")
-            
-            
+
             if (ti > 1):
                 d_train = self.MSE_train_dB_epoch[ti] - self.MSE_train_dB_epoch[ti - 1]
                 d_cv = self.MSE_cv_dB_epoch[ti] - self.MSE_cv_dB_epoch[ti - 1]
@@ -393,16 +381,13 @@ class Pipeline_ERTS:
 
         plt.xlabel("Epoch")
         plt.ylabel('MSE [dB]')
-        plt.title("Training Losses", y=1.08)
+        plt.title("Training Losses", y=1.09)
         plt.legend()
-
-
         plt.show()
 
-    def NNTest(self, SysModel, test_set, MaskOnState=False,\
-     randomInit=False,test_init=None,load_model=False,load_model_path=None,\
-        test_lengthMask=None):
-
+    def NNTest(self, SysModel, test_set,load_model_path=None):
+        
+        self.TEST_MODE = System_Mode(self.config.test_mode)
         self.test_set_size = self.model.batch_size = len(test_set)
 
         traj_lengths_in_test = torch.tensor([traj.traj_length for traj in test_set])
@@ -420,21 +405,11 @@ class Pipeline_ERTS:
 
         self.MSE_test_linear_arr = torch.zeros([self.test_set_size])
 
-        if MaskOnState:
-            mask = torch.tensor([True,False,False])
-            if SysModel.space_state_size == 2: 
-                mask = torch.tensor([True,False])
-
         # MSE LOSS Function
         loss_fn = nn.MSELoss(reduction='mean')
 
-        # Load model
-        # if load_model:
-        #     self.model = torch.load(load_model_path) 
-        # else:
-        #     self.model = torch.load(path_results+'best-model.pt')
-        # Load model weights
-        if load_model:
+        if load_model_path is not None:
+            print(f"Loading Model from path {load_model_path}")
             model_weights = torch.load(load_model_path, map_location=self.device) 
         else:
             model_weights = torch.load(os.path.join(self.config.path_results,f'best-model-weights_FINAL.pt'), map_location=self.device) 
@@ -467,7 +442,7 @@ class Pipeline_ERTS:
         for t in range(0, max_traj_length_in_test):
             x_out_test_forward[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_test[:, :, t],2)))
 
-        if self.TRAINING_MODE !=Training_Mode.FW_ONLY:
+        if self.TEST_MODE !=System_Mode.FW_ONLY:
             # Flip the order (this is needed because each trajectoy has a different length)
             for id,x_out_FW in enumerate(x_out_test_forward):
                 x_out_test_forward_flipped[id,:,:traj_lengths_in_test[id]] = torch.flip(x_out_FW[:,:traj_lengths_in_test[id]],dims=[1])
@@ -488,13 +463,16 @@ class Pipeline_ERTS:
             for id,x_out_flipped in enumerate(x_out_test_flipped):
                 x_out_test[id,:,:traj_lengths_in_test[id]] = torch.flip(x_out_flipped[:,:traj_lengths_in_test[id]],dims=[1])
 
+        test_set[0].x_estimated_FW = x_out_test_forward[0,:,:].detach()
+        test_set[0].x_estimated_BW = x_out_test[0,:,:].detach()
+        test_set[0].traj_plots([Trajectory_SS_Type.Real,Trajectory_SS_Type.Observed,Trajectory_SS_Type.Estimated_FW,Trajectory_SS_Type.Estimated_BW])
 
         end = time.time()
         t = end - start
 
         # MSE loss
         for j in range(self.test_set_size ):
-            if self.TRAINING_MODE ==Training_Mode.FW_ONLY:
+            if self.TRAINING_MODE ==System_Mode.FW_ONLY:
                 self.MSE_test_linear_arr[j] = loss_fn(x_out_test_forward[j,:,:] * mask_test[j,:,:], test_target[j,:,:]).item()
             else:
                 self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,:,:] * mask_test[j,:,:], test_target[j,:,:]).item()

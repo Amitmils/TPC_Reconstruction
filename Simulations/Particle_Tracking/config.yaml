@@ -1,0 +1,78 @@
+#Model Parameters
+state_vector_size: 6
+observation_vector_size: 3
+
+#For 'Amit Simulated' data - added noise to observations
+added_noise_mean: 0
+added_noise_var: 0.1
+
+#Data Split
+train_set_size: 150
+CV_set_size: 250
+test_set_size: 250
+batch_size: 150
+train: false
+test_mode: FW + BW
+
+#Training Scheduler
+wd: 1.0e-3
+first_phase_id: 0
+training_scheduler:
+  '0':
+    mode: FW
+    lr: 1.0e-3
+    n_epochs: 50
+    max_train_sequence_length: 25
+  '1':
+    mode: FW
+    lr: 1.0e-4
+    n_epochs: 100
+    max_train_sequence_length: 75
+  '2':
+    mode: FW
+    lr: 1.0e-4
+    n_epochs: 100
+    max_train_sequence_length: 125
+  '3':
+    mode: FW
+    lr: 1.0e-4
+    n_epochs: 100
+    max_train_sequence_length: 175
+  '4':
+    mode: FW
+    lr: 1.0e-4
+    n_epochs: 50
+    max_train_sequence_length: 225
+  '5':
+    mode: FW
+    lr: 1.0e-6
+    n_epochs: 50
+    max_train_sequence_length: -1
+  '6':
+    mode: BW
+    lr: 5.0e-4
+    n_epochs: 50
+    max_train_sequence_length: -1
+
+
+
+
+#Parameters for Neural Network
+use_cuda: false
+input_dim_mult_KNet: 5
+output_dim_mult_KNet: 40
+input_dim_mult_RTSNet: 5
+output_dim_mult_RTSNet: 40
+
+
+#Paths
+path_results: "/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/models"
+Dataset_path: "/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/data/dataset_14_03_24__21_49.pt"
+
+
+#Legacy - TODO is this needed?
+randomLength: false
+CompositionLoss: false
+two_pass: false
+load_trained_pass1: false
+load_dataset_for_pass2: false

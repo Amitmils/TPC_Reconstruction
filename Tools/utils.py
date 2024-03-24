@@ -27,7 +27,7 @@ class SS_VARIABLE(enum.Enum):
     Py = 4
     Pz = 5
 
-class Training_Mode(enum.Enum):
+class System_Mode(enum.Enum):
     FW_ONLY = "FW"
     BW_ONLY = "BW"
     FW_BW= "FW + BW"
@@ -112,6 +112,12 @@ class Trajectory():
         space_state_vector_list = []
         space_state_vector_list_velo = []
         energy_list = []
+        #Always make sure that observed is the last item in the list
+        #this is done for naming reasons in plot
+        if Trajectory_SS_Type.Observed in SS_to_plot:
+            index = SS_to_plot.index(Trajectory_SS_Type.Observed)
+            SS_to_plot.append(SS_to_plot.pop(index))
+    
         for traj_ss_type in SS_to_plot:
             if traj_ss_type == Trajectory_SS_Type.Real:
                 space_state_vector_list.append(self.x_real)
@@ -131,7 +137,7 @@ class Trajectory():
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         for i,space_state_vector in enumerate(space_state_vector_list):
-            ax.scatter3D(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:], space_state_vector[SS_VARIABLE.Z.value,:],label=SS_to_plot[i].value)
+            ax.scatter3D(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:], space_state_vector[SS_VARIABLE.Z.value,:],label=SS_to_plot[i].value,s=3)
         ax.legend()
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
@@ -141,17 +147,17 @@ class Trajectory():
         fig = plt.figure()
         ax = fig.add_subplot(111)
         for i,space_state_vector in enumerate(space_state_vector_list):
-            ax.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value)
+            ax.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
         ax.legend()
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_title('2D Trajectory')
 
         # fig, axs = plt.subplots(2)  # 2 rows of subplots
-        # for space_state_vector in space_state_vector_list_velo:
-        #     axs[0].plot(space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}')
-        #     axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
-        #     axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
+        # for i,space_state_vector in enumerate(space_state_vector_list_velo):
+        #     axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
+            # axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
+            # axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
         # axs[0].set_title(f"{'Momentums' if self.momentum_ss else 'Velocities'} Over Time")
         # axs[0].set_ylabel(f"{'Momentums [GeV/c]' if self.momentum_ss else 'Velocity [m/s]'}")
         # axs[0].set_xticks([])
