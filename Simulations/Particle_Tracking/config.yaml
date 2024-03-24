@@ -11,7 +11,7 @@ train_set_size: 150
 CV_set_size: 250
 test_set_size: 250
 batch_size: 150
-train: false
+train: true
 test_mode: FW + BW
 
 #Training Scheduler
