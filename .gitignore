@@ -1,4 +1,5 @@
 __pycache__/
 *.pyc
 *.pyo
-Simulations/Lorenz_Atractor/data/data_gen.pt
+Simulations/Particle_Tracking/data
+Simulations/Particle_Tracking/models
