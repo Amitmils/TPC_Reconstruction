@@ -138,6 +138,15 @@ class Trajectory():
         ax.set_zlabel('Z')
         ax.set_title('3D Trajectory')
 
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        for i,space_state_vector in enumerate(space_state_vector_list):
+            ax.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value)
+        ax.legend()
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_title('2D Trajectory')
+
         # fig, axs = plt.subplots(2)  # 2 rows of subplots
         # for space_state_vector in space_state_vector_list_velo:
         #     axs[0].plot(space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}')
@@ -373,7 +382,7 @@ def get_vel_deriv(vx,vy,vz,direction):
     temp_vx = vx * CM_NS__TO__M_S
     temp_vy = vy * CM_NS__TO__M_S
     temp_vz = vz * CM_NS__TO__M_S
-    deaccel = get_deacceleration(energy) * 0
+    deaccel = get_deacceleration(energy)
     Bx = 0
     By = 0
     Bz = B
@@ -381,7 +390,7 @@ def get_vel_deriv(vx,vy,vz,direction):
     Ey = 0
     Ez = -E
 
-    rr = torch.sqrt(vx**2 + vy**2 + vz**2)
+    rr = torch.sqrt(vx**2 + vy**2 + vz**2) + 1e-6
     az = torch.arctan2(vy,vx)
     po = torch.arccos(vz/rr)
     if direction == 'x':

@@ -25,6 +25,16 @@ class RTSNetNN(KalmanNetNN):
 
         self.InitRTSGainNet(ssModel.prior_Q, ssModel.prior_Sigma, system_config)
 
+        self.KNET_params = []
+        self.RTSNET_params = []
+        for name,param in self.named_parameters():
+            if 'bw' in name:
+                self.RTSNET_params.append(param)
+            else:
+                self.KNET_params.append(param)
+
+
+
     #################################################
     ### Initialize Backward Smoother Gain Network ###
     #################################################

@@ -25,7 +25,6 @@ class Pipeline_ERTS:
         self.PipelineName = self.folderName + "pipeline_" + self.modelName + ".pt"
         self.phase_change_epochs = [0] #for Visualization - aggregate the epochs which a phase changed
 
-
     def save(self):
         torch.save(self, self.PipelineName)
 
@@ -58,16 +57,14 @@ class Pipeline_ERTS:
         self.next_phase_change = self.num_epochs_in_phase # Which epoch to change to next phase
         self.max_train_sequence_length = self.config.training_scheduler[self.current_phase]["max_train_sequence_length"]
         self.TRAINING_MODE = Training_Mode(self.config.training_scheduler[self.current_phase]["mode"])
+        self.phase_modes = [self.TRAINING_MODE.value] #For visualization - set first mode type
+
         self.weightDecay = self.config.wd # L2 Weight Regularization - Weight Decay
         # self.alpha = self.config.alpha # Composition loss factor
         # MSE LOSS Function
         self.loss_fn = nn.MSELoss(reduction='mean')
 
-        # Use the optim package to define an Optimizer that will update the weights of
-        # the model for us. Here we will use Adam; the optim package contains many other
-        # optimization algoriths. The first argument to the Adam constructor tells the
-        # optimizer which Tensors it should update.
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learningRate, weight_decay=self.weightDecay)
+        self.set_optimizer()
         # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min',factor=0.9, patience=20)
         if self.config.train == True:
             self.report_training_phase()
@@ -77,6 +74,25 @@ class Pipeline_ERTS:
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
 
+    def set_optimizer(self):
+        # Use the optim package to define an Optimizer that will update the weights of
+        # the model for us. Here we will use Adam; the optim package contains many other
+        # optimization algoriths. The first argument to the Adam constructor tells the
+        # optimizer which Tensors it should update.
+        if self.TRAINING_MODE == Training_Mode.FW_BW:
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learningRate, weight_decay=self.weightDecay)
+        elif self.TRAINING_MODE == Training_Mode.FW_ONLY:
+            self.optimizer = torch.optim.Adam(self.model.KNET_params, lr=self.learningRate, weight_decay=self.weightDecay)
+        elif self.TRAINING_MODE == Training_Mode.BW_ONLY:
+            self.optimizer = torch.optim.Adam(self.model.RTSNET_params, lr=self.learningRate, weight_decay=self.weightDecay)
+
+    def update_training_mode(self):
+        new_training_mode = self.config.training_scheduler[self.current_phase]["mode"]
+        current_training_mode = self.TRAINING_MODE
+        self.TRAINING_MODE = Training_Mode(new_training_mode)
+        if new_training_mode != current_training_mode:
+            self.set_optimizer()
+        
     def switch_to_next_phase(self):
         #Load best weights from phase
         weights_path = os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt")
@@ -88,9 +104,9 @@ class Pipeline_ERTS:
         self.next_phase_change = self.next_phase_change + self.num_epochs_in_phase
         self.max_train_sequence_length = self.config.training_scheduler[self.current_phase]["max_train_sequence_length"]
         self.update_learning_rate(self.config.training_scheduler[self.current_phase]["lr"])
-        if self.config.training_scheduler[self.current_phase]["mode"] == "FW":
-            self.TRAINING_MODE = Training_Mode.FW_ONLY
+        self.update_training_mode()
         self.report_training_phase()
+
 
     def report_training_phase(self):
         print(f"\n######## Entered Training Phase {self.current_phase} ########\n\n"
@@ -142,6 +158,8 @@ class Pipeline_ERTS:
                 self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
                 self.MSE_cv_dB_opt = 1000
                 self.phase_change_epochs.append(ti) #for Visualization - aggregate the epochs which a phase changed
+                self.phase_modes.append(self.TRAINING_MODE.value)#for Visualization
+
                 self.switch_to_next_phase()
 
 
@@ -212,18 +230,21 @@ class Pipeline_ERTS:
                     x_out_training_batch_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, k],2), 
                                                                                     filter_x_nexttime = torch.unsqueeze(x_out_training_forward_batch_flipped[:, :, k-1],2),
                                                                                     smoother_x_tplus2 = torch.unsqueeze(x_out_training_batch_flipped[:, :, k-2],2)))
-                
                 # Flip back to original order
                 for id_in_batch,x_out_flipped in enumerate(x_out_training_batch_flipped):
                     x_out_training_batch[id_in_batch,:,:traj_lengths_in_train_batch[id_in_batch]] = torch.flip(x_out_flipped[:,:traj_lengths_in_train_batch[id_in_batch]],dims=[1])
+            
+            train_batch[0].x_estimated_BW = x_out_training_batch[0].clone().detach()
+            train_batch[0].x_estimated_FW = x_out_training_forward_batch[0].clone().detach()
+            # train_batch[0].traj_plots([Trajectory_SS_Type.Estimated_BW,Trajectory_SS_Type.Estimated_FW,Trajectory_SS_Type.Real])
 
 
 
             #Compute train loss
             if self.TRAINING_MODE == Training_Mode.FW_ONLY:
-                MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_forward_batch*mask_train, train_target_batch)
+                MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_forward_batch * mask_train, train_target_batch)
             else:
-                MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_batch, train_target_batch)
+                MSE_trainbatch_linear_LOSS = self.loss_fn(x_out_training_batch * mask_train, train_target_batch)
 
             # dB Loss
             self.MSE_train_linear_epoch[ti] = MSE_trainbatch_linear_LOSS.item()
@@ -315,7 +336,7 @@ class Pipeline_ERTS:
                 if self.TRAINING_MODE == Training_Mode.FW_ONLY:
                     MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv_forward * mask_CV, CV_target)
                 else:
-                    MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv, CV_target)
+                    MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv * mask_CV,CV_target)
 
                 # dB Loss
                 self.MSE_cv_linear_epoch[ti] = MSE_cvbatch_linear_LOSS.item()
@@ -354,6 +375,8 @@ class Pipeline_ERTS:
         self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
         self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
         self.phase_change_epochs.append(self.num_epochs)
+        self.phase_modes.append(self.TRAINING_MODE.value)
+
 
         plt.figure()
         plt.plot(range(len(self.MSE_train_dB_epoch)),self.MSE_train_dB_epoch,label='Train loss',linewidth=0.5)
@@ -366,7 +389,7 @@ class Pipeline_ERTS:
         for epoch in self.phase_change_epochs:
             plt.axvline(x=epoch, color='red', linestyle='--',linewidth=0.7)
         for phase_id,epoch in enumerate(self.phase_change_epochs):
-            plt.text(epoch, plt.gca().get_ylim()[1] + 0.5, f'P{phase_id}', ha='center')
+            plt.text(epoch, plt.gca().get_ylim()[1] + 0.7, f'P{phase_id}\n ({self.phase_modes[phase_id]})', ha='center')
 
         plt.xlabel("Epoch")
         plt.ylabel('MSE [dB]')
@@ -474,7 +497,7 @@ class Pipeline_ERTS:
             if self.TRAINING_MODE ==Training_Mode.FW_ONLY:
                 self.MSE_test_linear_arr[j] = loss_fn(x_out_test_forward[j,:,:] * mask_test[j,:,:], test_target[j,:,:]).item()
             else:
-                self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,:,:], test_target[j,:,:]).item()
+                self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,:,:] * mask_test[j,:,:], test_target[j,:,:]).item()
         
         # Average
         self.MSE_test_linear_avg = torch.mean(self.MSE_test_linear_arr)
