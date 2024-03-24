@@ -43,33 +43,10 @@ else:
     device = torch.device('cpu')
     print("Using CPU")
 
-### dataset parameters ###################################################
-offset = 0 # offset for the data
-chop = False # whether to chop data sequences into shorter sequences
-
-
-# only 'full' for data size case
-switch = 'full'
-# specify the path to save trained pass1 model
-RTSNetPass1_path = os.path.join(system_config.path_results,"best-model-weights.pt")
-
-
-path_results = 'RTSNet/'
-
-# 1pass or 2pass
-two_pass = False # if true: use two pass method, else: use one pass method
-
-load_trained_pass1 = False # if True: load trained RTSNet pass1, else train pass1
-# Save the dataset generated from testing RTSNet1 on train and`` CV data
-load_dataset_for_pass2 = False # if True: load dataset generated from testing RTSNet1 on train and CV data
-# Specify the path to save the dataset
-DatasetPass1_path = "Simulations/Lorenz_Atractor/data/T100_Hrot1/2ndPass/partial/ResultofPass1_rq1030partial.pt" 
 
 ####################
 ###  load data   ###
 ####################
-# print("Start Data Gen")
-# DataGen(args, sys_model_gen, DatafolderName + dataFileName_gen)
 print(f"Data Load : {os.path.basename(system_config.Dataset_path)}")
 [train_set,CV_set, test_set] =  torch.load(system_config.Dataset_path)
  
@@ -163,8 +140,6 @@ else:
       [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set)
    ## Test Neural Network
    [MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,rtsnet_out,RunTime] = RTSNet_Pipeline.NNTest(sys_model,test_set)
-   # Save trained model
-   torch.save(RTSNet_Pipeline.model.state_dict(), RTSNetPass1_path)
 ####################################################################################
 
 if two_pass:

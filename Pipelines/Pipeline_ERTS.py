@@ -92,7 +92,7 @@ class Pipeline_ERTS:
         self.TRAINING_MODE = System_Mode(new_training_mode)
         if new_training_mode != current_training_mode:
             self.set_optimizer()
-        
+
     def switch_to_next_phase(self):
         #Load best weights from phase
         weights_path = os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt")
@@ -119,13 +119,9 @@ class Pipeline_ERTS:
 
     def NNTrain(self, SysModel, train_set, cv_set):
 
-        ### Optional: start training from previous checkpoint
-        # model_weights = torch.load(path_results+'best-model-weights.pt', map_location=self.device) 
-        # self.model.load_state_dict(model_weights)
-
         self.train_set_size = len(train_set)
         self.CV_set_size = len(cv_set)
-        
+
 
         self.MSE_cv_linear_epoch = torch.zeros([self.num_epochs])
         self.MSE_cv_dB_epoch = torch.zeros([self.num_epochs])
@@ -323,7 +319,6 @@ class Pipeline_ERTS:
                     for id,x_out_flipped in enumerate(x_out_cv_flipped):
                         x_out_cv[id,:,:traj_lengths_in_CV[id]] = torch.flip(x_out_flipped[:,:traj_lengths_in_CV[id]],dims=[1])
 
-
                 # Compute CV Loss
                 if self.TRAINING_MODE == System_Mode.FW_ONLY:
                     MSE_cvbatch_linear_LOSS = self.loss_fn(x_out_cv_forward * mask_CV, CV_target)
@@ -341,7 +336,6 @@ class Pipeline_ERTS:
                     torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
                     if int(self.current_phase) == self.total_num_phases-1:
                         torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt")) 
-
 
             ########################
             ### Training Summary ###
@@ -423,7 +417,6 @@ class Pipeline_ERTS:
         torch.no_grad()
 
         start = time.time()
-
         M1_0 = []
         for ii,traj in enumerate(test_set):
             y_test[ii,:,:traj.traj_length]      = traj.y[:,:traj.traj_length]
