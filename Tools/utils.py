@@ -94,7 +94,6 @@ class Trajectory():
         if observation_data is not None:
             self.y = torch.cat(observation_data['x'],observation_data['y'],observation_data['z'],dim=1).T
         else:
-            #TODO add noise
             noise = 0
             self.y = self.x_real[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:] + noise
 
@@ -182,7 +181,7 @@ class Traj_Generator():
         self.vz = torch.zeros((self.max_traj_length ,1))
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
-        self.delta_t = 0.05 #step size in nseconds
+        self.delta_t = 0.05 #step size in nseconds (0.5 cm)
 
     def set_init_values(self,energy=None,theta=None,init_vx=None,init_vy=None,init_vz=None,phi=0,init_x=0,init_y=0,init_z=0):
         self.init_energy = energy
@@ -314,13 +313,47 @@ def get_mx_0(traj_coordinates,forced_phi=None):
 
     ## Init Angles ##
     init_theta = torch.arccos(vector[1])
-    init_phi= torch.arctan2(y[1]-y[0],x[1]-x[0]) if forced_phi == None else forced_phi
 
 
 
     ### Init Energy ###
     brho = init_radius * B / np.sin(init_theta)
     init_energy,init_p = get_energy_from_brho(brho)
+
+    init_phi= torch.arctan2(y[1]-y[0],x[1]-x[0]) if forced_phi == None else forced_phi
+
+    # #fit for Phi
+    # phis = np.unwrap(torch.arctan2(y_from_center[1:]-y_from_center[0],x_from_center[1:]-x_from_center[0]))
+    # num_points = 1
+    # avg_phi_diff = np.mean(np.diff(phis))
+    # x_diff = x_from_center.diff()[:num_points]
+    # y_diff = y_from_center.diff()[:num_points]
+    # V_xy = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * 0.05
+    # temp_x = torch.arccos(x_diff/V_xy)
+    # temp_x += torch.arange(num_points) * avg_phi_diff
+    # temp_y = torch.arcsin(y_diff/V_xy)
+    # temp_y += torch.arange(num_points) * avg_phi_diff
+    # init_phi_v2_x = torch.mean(temp_x)
+    # init_phi_v2_y = torch.mean(temp_y)
+
+
+    # phis = np.unwrap(torch.arctan2(y_from_center[1:]-y_from_center[0],x_from_center[1:]-x_from_center[0]))
+    # num_points = 5
+    # avg_phi_diff = np.mean(np.diff(phis))
+    # x_diff = x_from_center.diff()[:num_points]
+    # y_diff = y_from_center.diff()[:num_points]
+    # V_xy = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * 0.05
+    # temp_x = torch.arccos(x_diff/V_xy)
+    # temp_x += torch.arange(num_points) * avg_phi_diff
+    # temp_y = torch.arcsin(y_diff/V_xy)
+    # temp_y += torch.arange(num_points) * avg_phi_diff
+    # init_phi_v3_x = torch.mean(temp_x)
+    # init_phi_v3_y = torch.mean(temp_y)
+    # print(f"Real {init_phi if forced_phi is None else forced_phi}\n 1 sample X: {init_phi_v2_x}, Y:  {init_phi_v2_y}\n 5 sample X: {init_phi_v3_x}, Y:  {init_phi_v3_y}")
+
+
+
+
 
     estimated_parameters = {
         "inital_theta" : init_theta,
@@ -598,9 +631,9 @@ def test():
     
 
 if __name__ == "__main__":
-    generate_dataset(N_Train=150,N_CV=25,N_Test=25,dataset_name="No_Deaccel")
-    # gen = Traj_Generator()
-    # traj = gen.generate(energy=12,theta=1,phi=0)
+    # generate_dataset(N_Train=150,N_CV=25,N_Test=25,dataset_name="No_Deaccel")
+    gen = Traj_Generator()
+    traj = gen.generate(energy=12,theta=1,phi=1.46)
     # traj.traj_plots([Trajectory_SS_Type.Real])
     # df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
     # df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)

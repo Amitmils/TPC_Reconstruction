@@ -148,9 +148,9 @@ class Pipeline_ERTS:
                 self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
                 self.MSE_cv_dB_opt = 1000
                 self.phase_change_epochs.append(ti) #for Visualization - aggregate the epochs which a phase changed
+                self.switch_to_next_phase()
                 self.phase_modes.append(self.TRAINING_MODE.value)#for Visualization
 
-                self.switch_to_next_phase()
 
 
 
@@ -356,9 +356,6 @@ class Pipeline_ERTS:
     def plot_training_summary(self):
         self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
         self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
-        self.phase_change_epochs.append(self.num_epochs)
-        self.phase_modes.append(self.TRAINING_MODE.value)
-
 
         plt.figure()
         plt.plot(range(len(self.MSE_train_dB_epoch)),self.MSE_train_dB_epoch,label='Train loss',linewidth=0.5)

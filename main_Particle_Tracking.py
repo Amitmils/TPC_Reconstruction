@@ -123,26 +123,24 @@ print("Evaluate RTS true")
 ######################
 ## RTSNet - 1 full ###
 ######################
-if load_trained_pass1:
-   print("Load RTSNet pass 1")
-else:
-   ## Build Neural Network
-   print("RTSNet with full model info")
-   RTSNet_model = RTSNetNN()
-   RTSNet_model.NNBuild(sys_model,system_config)
-   # ## Train Neural Network
-   RTSNet_Pipeline = Pipeline(strTime, "RTSNet", "RTSNet",system_config)
-   RTSNet_Pipeline.setssModel(sys_model)
-   RTSNet_Pipeline.setModel(RTSNet_model)
-   print("Number of trainable parameters for RTSNet:",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
-   RTSNet_Pipeline.setTrainingParams()    
-   if system_config.train == True:
-      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set)
-   ## Test Neural Network
-   [MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,rtsnet_out,RunTime] = RTSNet_Pipeline.NNTest(sys_model,test_set)
+
+## Build Neural Network
+print("RTSNet with full model info")
+RTSNet_model = RTSNetNN()
+RTSNet_model.NNBuild(sys_model,system_config)
+# ## Train Neural Network
+RTSNet_Pipeline = Pipeline(strTime, "RTSNet", "RTSNet",system_config)
+RTSNet_Pipeline.setssModel(sys_model)
+RTSNet_Pipeline.setModel(RTSNet_model)
+print("Number of trainable parameters for RTSNet:",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
+RTSNet_Pipeline.setTrainingParams()    
+if system_config.train == True:
+   [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set)
+## Test Neural Network
+[MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,rtsnet_out,RunTime] = RTSNet_Pipeline.NNTest(sys_model,test_set)
 ####################################################################################
 
-if two_pass:
+if False:
 ################################
 ## RTSNet - 2 with full info ###
 ################################
