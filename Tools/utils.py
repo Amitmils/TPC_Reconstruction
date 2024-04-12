@@ -55,8 +55,20 @@ E = torch.cos((Q_PROTON*B)/MASS_PROTON_KG) * 500 #Applied Electric Field (V/m)
 ATOMIC_NUMBER = 1
 C = 3*1e8
 CHAMBER_RADIUS  = 25 #cm
+GAS_MEDIUM_DENSITY = 3.3e-5 * 1000 #mg/cm3 at 1 bar
 
 
+
+data = np.loadtxt("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Tools/stpHydrogen_new.txt",skiprows=1, dtype=float)
+energy_col = data[:, 0]  # First column [MeV]
+stopping_power_col = data[:, 1]  # Second column [MeV / (mg/cm2)]
+range_col = data[:, 2]  # third column [cm]
+longitudinal_straggling_col = data[:, 3]  # fourth column [cm]
+lateral_straggling_col = data[:, 4]  # fifth column [cm]
+
+RANGE_TO_LONG_STRAGGLING_TABLE = splrep(range_col, longitudinal_straggling_col)
+RANGE_TO_LAT_STRAGGLING_TABLE = splrep(range_col, lateral_straggling_col)
+ENERGY_TO_STOPPING_POWER_TABLE= splrep(energy_col, stopping_power_col)
 
 
 class CONFIG():
@@ -91,13 +103,14 @@ class Trajectory():
             self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['px'],real_traj_data['py'],real_traj_data['pz']),dim=1).T
         else:
             self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['vx'],real_traj_data['vy'],real_traj_data['vz']),dim=1).T
+        
+        self.traj_length = self.x_real.shape[1]
+        
         if observation_data is not None:
             self.y = torch.cat(observation_data['x'],observation_data['y'],observation_data['z'],dim=1).T
         else:
-            noise = 0
-            self.y = self.x_real[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:] + noise
-
-        self.traj_length = self.x_real.shape[1]
+            self.y = torch.cat(observation_data['x'],observation_data['y'],observation_data['z'],dim=1).T
+            # self.generate_obs_traj() #TODO How to generate noise correctly
 
         self.x_estimated_FW = torch.zeros_like(self.x_real)
         self.x_estimated_BW = torch.zeros_like(self.x_real)
@@ -106,6 +119,17 @@ class Trajectory():
     
     def set_name(self,name):
         self.traj_name = name
+
+    def generate_obs_traj(self):
+        self.y = torch.zeros_like(self.x_real[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:])
+        for t in range(1,self.traj_length):
+            x_curr,y_curr,z_curr =  self.x_real[:3,t]
+            x_prev,y_prev,z_prev =  self.x_real[:3,t-1]            
+            rho_diff = torch.sqrt(torch.pow(x_curr-x_prev,2) + torch.pow(y_curr-y_prev,2) + torch.pow(z_curr-z_prev,2))
+            obs_x,obs_y,obs_z = add_straggling_to_position(x_curr,y_curr,z_curr,rho_diff)
+            self.y[SS_VARIABLE.X.value,t] = obs_x
+            self.y[SS_VARIABLE.Y.value,t] = obs_y
+            self.y[SS_VARIABLE.Z.value,t] = obs_z
 
     def traj_plots(self,SS_to_plot : List[Trajectory_SS_Type],show=True,save=False,output_path=None):
         space_state_vector_list = []
@@ -152,21 +176,21 @@ class Trajectory():
         ax.set_ylabel('Y')
         ax.set_title('2D Trajectory')
 
-        # fig, axs = plt.subplots(2)  # 2 rows of subplots
-        # for i,space_state_vector in enumerate(space_state_vector_list_velo):
-        #     axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
-            # axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
-            # axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
-        # axs[0].set_title(f"{'Momentums' if self.momentum_ss else 'Velocities'} Over Time")
-        # axs[0].set_ylabel(f"{'Momentums [GeV/c]' if self.momentum_ss else 'Velocity [m/s]'}")
-        # axs[0].set_xticks([])
-        # axs[0].legend()
-        # for i,energy in enumerate(energy_list):
-        #     axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
-        # axs[1].set_title('Kinetic Energy Over Time')
-        # axs[1].set_xlabel('Time [s]')
-        # axs[1].set_ylabel('Energy [MeV]')
-        # axs[1].legend()
+        fig, axs = plt.subplots(2)  # 2 rows of subplots
+        for i,space_state_vector in enumerate(space_state_vector_list_velo):
+            axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
+            axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
+            axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
+        axs[0].set_title(f"{'Momentums' if self.momentum_ss else 'Velocities'} Over Time")
+        axs[0].set_ylabel(f"{'Momentums [GeV/c]' if self.momentum_ss else 'Velocity [m/s]'}")
+        axs[0].set_xticks([])
+        axs[0].legend()
+        for i,energy in enumerate(energy_list):
+            axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
+        axs[1].set_title('Kinetic Energy Over Time')
+        axs[1].set_xlabel('Time [s]')
+        axs[1].set_ylabel('Energy [MeV]')
+        axs[1].legend()
         if show:
             plt.show()
 
@@ -254,8 +278,6 @@ def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
         traj.y += gaussian_noise
     return traj_list
     
-
-
 def get_energy_from_brho(brho):
     '''
     Input : 
@@ -322,39 +344,6 @@ def get_mx_0(traj_coordinates,forced_phi=None):
 
     init_phi= torch.arctan2(y[1]-y[0],x[1]-x[0]) if forced_phi == None else forced_phi
 
-    # #fit for Phi
-    # phis = np.unwrap(torch.arctan2(y_from_center[1:]-y_from_center[0],x_from_center[1:]-x_from_center[0]))
-    # num_points = 1
-    # avg_phi_diff = np.mean(np.diff(phis))
-    # x_diff = x_from_center.diff()[:num_points]
-    # y_diff = y_from_center.diff()[:num_points]
-    # V_xy = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * 0.05
-    # temp_x = torch.arccos(x_diff/V_xy)
-    # temp_x += torch.arange(num_points) * avg_phi_diff
-    # temp_y = torch.arcsin(y_diff/V_xy)
-    # temp_y += torch.arange(num_points) * avg_phi_diff
-    # init_phi_v2_x = torch.mean(temp_x)
-    # init_phi_v2_y = torch.mean(temp_y)
-
-
-    # phis = np.unwrap(torch.arctan2(y_from_center[1:]-y_from_center[0],x_from_center[1:]-x_from_center[0]))
-    # num_points = 5
-    # avg_phi_diff = np.mean(np.diff(phis))
-    # x_diff = x_from_center.diff()[:num_points]
-    # y_diff = y_from_center.diff()[:num_points]
-    # V_xy = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * 0.05
-    # temp_x = torch.arccos(x_diff/V_xy)
-    # temp_x += torch.arange(num_points) * avg_phi_diff
-    # temp_y = torch.arcsin(y_diff/V_xy)
-    # temp_y += torch.arange(num_points) * avg_phi_diff
-    # init_phi_v3_x = torch.mean(temp_x)
-    # init_phi_v3_y = torch.mean(temp_y)
-    # print(f"Real {init_phi if forced_phi is None else forced_phi}\n 1 sample X: {init_phi_v2_x}, Y:  {init_phi_v2_y}\n 5 sample X: {init_phi_v3_x}, Y:  {init_phi_v3_y}")
-
-
-
-
-
     estimated_parameters = {
         "inital_theta" : init_theta,
         "initial_phi" : init_phi,
@@ -416,7 +405,7 @@ def get_vel_deriv(vx,vy,vz,direction):
     Output :
         a - [cm/ns^2]
     '''
-    energy = get_energy_from_velocities(vx,vy,vz)
+    energy = get_energy_from_velocities(vx,vy,vz) #MeV
     #convert velocities to m/s for computation
     temp_vx = vx * CM_NS__TO__M_S
     temp_vy = vy * CM_NS__TO__M_S
@@ -441,57 +430,6 @@ def get_vel_deriv(vx,vy,vz,direction):
     a *= M_S_SQUARED__TO__CM_NS_SQUARED
     return a
 
-#TODO make f_gen and f one
-def f_gen(state_space_vector_prev,delta_t):
-    x,y,z,vx,vy,vz = state_space_vector_prev
-
-    ## f1 ##
-    k1x = vx
-    k1y = vy
-    k1z = vz
-
-    k1vx = get_vel_deriv(vx,vy,vz,direction='x')
-    k1vy = get_vel_deriv(vx,vy,vz,direction='y')
-    k1vz = get_vel_deriv(vx,vy,vz,direction='z')
-
-    ## f2 ##
-    k2x = vx + 0.5 * delta_t * k1x
-    k2y = vy + 0.5 * delta_t * k1y
-    k2z = vz + 0.5 * delta_t * k1z
-
-    k2vx = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='x')
-    k2vy = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='y')
-    k2vz = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='z')
-
-    ## f3 ##
-    k3x = vx + 0.5 * delta_t * k2x
-    k3y = vy + 0.5 * delta_t * k2y
-    k3z = vz + 0.5 * delta_t * k2z
-
-    k3vx = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='x')
-    k3vy = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='y')
-    k3vz = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='z')
-
-    ## f4 ##
-    k4x = vx + delta_t * k3x
-    k4y = vy + delta_t * k3y
-    k4z = vz + delta_t * k3z
-
-    k4vx = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='x')
-    k4vy = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='y')
-    k4vz = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='z')
-
-    vx = vx + (delta_t/6) * (k1vx+ 2*k2vx + 2*k3vx + k4vx)
-    vy = vy + (delta_t/6) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
-    vz = vz + (delta_t/6) * (k1vz + 2*k2vz + 2*k3vz + k4vz)
-
-    x = x + (delta_t/6) * (k1x + 2*k2x + 2*k3x + k4x)
-    y = y + (delta_t/6) * (k1y + 2*k2y + 2*k3y + k4y)
-    z = z + (delta_t/6) * (k1z + 2*k2z + 2*k3z + k4z)
-
-    state_space_vector_curr = (x,y,z,vx,vy,vz)
-    return state_space_vector_curr
-
 def f(state_space_vector_prev,delta_t):
     '''
     INPUT:
@@ -506,8 +444,6 @@ def f(state_space_vector_prev,delta_t):
     vy = state_space_vector_prev[:,SS_VARIABLE.Vy.value]
     vz = state_space_vector_prev[:,SS_VARIABLE.Vz.value]
 
-
-
     ## f1 ##
     k1x = vx
     k1y = vy
@@ -518,32 +454,34 @@ def f(state_space_vector_prev,delta_t):
     k1vz = get_vel_deriv(vx,vy,vz,direction='z')
 
     ## f2 ##
-    k2x = vx + 0.5 * delta_t * k1x
-    k2y = vy + 0.5 * delta_t * k1y
-    k2z = vz + 0.5 * delta_t * k1z
+    k2x = vx + 0.5 * delta_t * k1vx
+    k2y = vy + 0.5 * delta_t * k1vy
+    k2z = vz + 0.5 * delta_t * k1vz
+
 
     k2vx = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='x')
     k2vy = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='y')
     k2vz = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='z')
 
     ## f3 ##
-    k3x = vx + 0.5 * delta_t * k2x
-    k3y = vy + 0.5 * delta_t * k2y
-    k3z = vz + 0.5 * delta_t * k2z
+    k3x = vx + 0.5 * delta_t * k2vx
+    k3y = vy + 0.5 * delta_t * k2vy
+    k3z = vz + 0.5 * delta_t * k2vz
 
     k3vx = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='x')
     k3vy = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='y')
     k3vz = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='z')
 
     ## f4 ##
-    k4x = vx + delta_t * k3x
-    k4y = vy + delta_t * k3y
-    k4z = vz + delta_t * k3z
+    k4x = vx + delta_t * k3vx
+    k4y = vy + delta_t * k3vy
+    k4z = vz + delta_t * k3vz
 
     k4vx = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='x')
     k4vy = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='y')
     k4vz = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='z')
 
+    ##RK Final Step
     vx = vx + (delta_t/6) * (k1vx+ 2*k2vx + 2*k3vx + k4vx)
     vy = vy + (delta_t/6) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
     vz = vz + (delta_t/6) * (k1vz + 2*k2vz + 2*k3vz + k4vz)
@@ -568,6 +506,36 @@ def h(space_state_vector):
     obs_vector = torch.matmul(H,space_state_vector)
     return obs_vector
 
+def get_straggling(rho_diff):
+    interp_lateral_straggling = splev(rho_diff.detach(), RANGE_TO_LAT_STRAGGLING_TABLE)
+    interp_longitudinal_straggling = splev(rho_diff.detach(), RANGE_TO_LONG_STRAGGLING_TABLE)
+    return torch.tensor(interp_lateral_straggling),torch.tensor(interp_longitudinal_straggling)
+
+def add_straggling_to_position(x,y,z,rho_diff):
+    #This function is called AFTER deaccel , meaning the mean was taken off now we just need to add the straggling
+    radius = torch.sqrt(torch.pow(x,2) + torch.pow(y,2) + torch.pow(z,2))
+    theta = torch.arctan2(y,x)
+    phi = torch.arccos(z/radius)
+
+    lat_straggling,long_straggling = get_straggling(rho_diff)
+
+    angle_stds = torch.arctan2(lat_straggling,radius)
+
+    delta_phi = torch.randn(1) *  angle_stds
+    delta_theta = torch.randn(1) *  angle_stds
+    delta_radius = torch.randn(1) *  long_straggling
+
+    new_radius = radius + delta_radius
+    new_theta = theta + delta_theta
+    new_phi  = phi + delta_phi
+
+    new_x = new_radius * torch.sin(new_theta) * torch.cos(new_phi)
+    new_y = new_radius * torch.sin(new_theta) * torch.sin(new_phi)
+    new_z = new_radius * torch.cos(new_theta)
+
+    return new_x,new_y,new_z
+
+
 def get_deacceleration(energy_interp):
     '''
     Input : 
@@ -575,14 +543,9 @@ def get_deacceleration(energy_interp):
     Output :
         interp_stopping_acc - [m/s^2]
     '''
-    gasMediumDensity = 8.988e-5 #g/cm3 at 1 bar
-    data = np.loadtxt("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Tools/stpHydrogen.txt", dtype=float)
-    energy = data[:, 0]  # First column
-    stopping_power = data[:, 1]  # Second column
-    tck = splrep(energy, stopping_power)
-    interp_stopping_power = splev(energy_interp.detach(), tck)
+    interp_stopping_power = splev(energy_interp.detach(), ENERGY_TO_STOPPING_POWER_TABLE)#MeV/(mg/cm2)
 
-    interp_stopping_force =interp_stopping_power * 1.6021773349e-13 * gasMediumDensity*100
+    interp_stopping_force =interp_stopping_power * 1.6021773349e-13 * GAS_MEDIUM_DENSITY * 100
     interp_stopping_acc = interp_stopping_force / MASS_PROTON_KG
     return interp_stopping_acc.float()
 
@@ -615,6 +578,61 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
     test_set = Dataset[N_CV:]
     torch.save([training_set,CV_set,test_set], os.path.join(output_dir,f'{dataset_name}.pt'))
 
+def setup_table_formats(input_file):
+
+    # Load the data from the text file
+    df = pd.read_csv(input_file, delim_whitespace=True, header=None)
+
+    def convert_to_float(value):
+        return float(value.replace(',', '|').replace('.', ',').replace('|', '.'))
+
+    # Function to convert energy values to MeV
+    def convert_to_mev(energy, unit):
+        energy = energy.replace(',', '|').replace('.', ',').replace('|', '.')
+        if unit == 'eV':
+            return str(float(energy) / 1000000)
+        elif unit == 'keV':
+            return str(float(energy) / 1000)
+        elif unit == 'MeV':  # Already in MeV
+            return str(energy)
+        else:
+            assert False, f"Unknown energy unit : {unit}"
+
+    # Function to convert length values to um
+    def convert_to_cm(value, unit):
+        value = float(value.replace(',', '|').replace('.', ',').replace('|', '.'))
+        if unit == 'um':
+            return value / 10000  # 1 um = 0.0001 cm
+        elif unit == 'mm':
+            return value / 10     # 1 mm = 0.1 cm
+        elif unit == 'cm':
+            return value         # If already in cm, return as is
+        elif unit == 'm':
+            return value * 100        # If already in cm, return as is
+        elif unit == 'km':
+            return value * 100000        
+        else:
+            assert False, f"Unknown length unit : {unit}"
+
+    # Apply conversions
+    df[0] = df.apply(lambda row: convert_to_mev(row[0], row[1]), axis=1)
+    df[4] = df.apply(lambda row: convert_to_cm(row[4], row[5]), axis=1)
+    df[6] = df.apply(lambda row: convert_to_cm(row[6], row[7]), axis=1)
+    df[8] = df.apply(lambda row: convert_to_cm(row[8], row[9]), axis=1)
+
+
+    #sum power loss
+    df[2] = df[2].apply(convert_to_float)
+    df[3] = df[3].apply(convert_to_float)
+    df[2] = df[2] + df[3]
+
+    df = df.iloc[:, [0, 2, 4, 6, 8]]
+
+    # Write the modified DataFrame to a new text file without units
+    headers = ['Energy [MeV]','dE/dx','Range [cm]','Longitudinal Straggling [cm]','Lateral Straggling [cm]']
+    df.to_csv(os.path.join("Tools","stpHydrogen_new.txt"), sep=' ', index=False, header=headers)
+
+
 def test():
     #Check that f works like the same with 1 and N batches
     [train_set,CV_set, test_set] =  torch.load(r"/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/data/dataset_14_03_24__21_49.pt")
@@ -633,8 +651,8 @@ def test():
 if __name__ == "__main__":
     # generate_dataset(N_Train=150,N_CV=25,N_Test=25,dataset_name="No_Deaccel")
     gen = Traj_Generator()
-    traj = gen.generate(energy=12,theta=1,phi=1.46)
-    # traj.traj_plots([Trajectory_SS_Type.Real])
+    traj = gen.generate(energy=2,theta=1,phi=1.46)
+    traj.traj_plots([Trajectory_SS_Type.Real,Trajectory_SS_Type.Observed])
     # df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
     # df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)
     # gen.save_csv(traj_data)
