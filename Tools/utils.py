@@ -66,8 +66,6 @@ range_col = data[:, 2]  # third column [cm]
 longitudinal_straggling_col = data[:, 3]  # fourth column [cm]
 lateral_straggling_col = data[:, 4]  # fifth column [cm]
 
-RANGE_TO_LONG_STRAGGLING_TABLE = splrep(range_col, longitudinal_straggling_col)
-RANGE_TO_LAT_STRAGGLING_TABLE = splrep(range_col, lateral_straggling_col)
 ENERGY_TO_STOPPING_POWER_TABLE= splrep(energy_col, stopping_power_col)
 
 
@@ -87,30 +85,19 @@ class CONFIG():
         return data
 
 class Trajectory():
-    def __init__(self,real_traj_data,observation_data=None,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,momentum_ss=False,init_energy=None,init_teta=None,init_phi=None,delta_t=None) -> None:
-        assert not(momentum_ss), "No support for momentum SS Yet!"
-        assert delta_t is not None or len(real_traj_data['t']) > 0, "delta_t or time stamps are needed for propagation function!"
+    def __init__(self,traj_data,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,init_energy=None,init_teta=None,init_phi=None,delta_t=None) -> None:
+        assert delta_t is not None or len(traj_data['t']) > 0, "delta_t or time stamps are needed for propagation function!"
 
         self.data_src = data_source
         self.init_energy = init_energy
         self.init_teta = init_teta
         self.init_phi = init_phi
-        self.t = real_traj_data['t'] if 't' in real_traj_data else torch.tensor([])
+        self.t = traj_data['t'] if 't' in traj_data else torch.tensor([])
         self.delta_t = delta_t if delta_t is not None else self.t[1]-self.t[0]
-        self.momentum_ss = momentum_ss
-        self.real_energy = real_traj_data['energy'] if 'energy' in real_traj_data else torch.tensor([])
-        if momentum_ss:
-            self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['px'],real_traj_data['py'],real_traj_data['pz']),dim=1).T
-        else:
-            self.x_real = torch.cat((real_traj_data['x'],real_traj_data['y'],real_traj_data['z'],real_traj_data['vx'],real_traj_data['vy'],real_traj_data['vz']),dim=1).T
-        
+        self.real_energy = traj_data['energy'] if 'energy' in traj_data else torch.tensor([])
+        self.x_real = traj_data['real_traj']
+        self.y = traj_data['obs_traj']
         self.traj_length = self.x_real.shape[1]
-        
-        if observation_data is not None:
-            self.y = torch.cat(observation_data['x'],observation_data['y'],observation_data['z'],dim=1).T
-        else:
-            self.y = torch.cat(observation_data['x'],observation_data['y'],observation_data['z'],dim=1).T
-            # self.generate_obs_traj() #TODO How to generate noise correctly
 
         self.x_estimated_FW = torch.zeros_like(self.x_real)
         self.x_estimated_BW = torch.zeros_like(self.x_real)
@@ -119,17 +106,6 @@ class Trajectory():
     
     def set_name(self,name):
         self.traj_name = name
-
-    def generate_obs_traj(self):
-        self.y = torch.zeros_like(self.x_real[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:])
-        for t in range(1,self.traj_length):
-            x_curr,y_curr,z_curr =  self.x_real[:3,t]
-            x_prev,y_prev,z_prev =  self.x_real[:3,t-1]            
-            rho_diff = torch.sqrt(torch.pow(x_curr-x_prev,2) + torch.pow(y_curr-y_prev,2) + torch.pow(z_curr-z_prev,2))
-            obs_x,obs_y,obs_z = add_straggling_to_position(x_curr,y_curr,z_curr,rho_diff)
-            self.y[SS_VARIABLE.X.value,t] = obs_x
-            self.y[SS_VARIABLE.Y.value,t] = obs_y
-            self.y[SS_VARIABLE.Z.value,t] = obs_z
 
     def traj_plots(self,SS_to_plot : List[Trajectory_SS_Type],show=True,save=False,output_path=None):
         space_state_vector_list = []
@@ -181,8 +157,8 @@ class Trajectory():
             axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
             axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
             axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
-        axs[0].set_title(f"{'Momentums' if self.momentum_ss else 'Velocities'} Over Time")
-        axs[0].set_ylabel(f"{'Momentums [GeV/c]' if self.momentum_ss else 'Velocity [m/s]'}")
+        axs[0].set_title("Velocities Over Time")
+        axs[0].set_ylabel(f"Velocity [m/s]")
         axs[0].set_xticks([])
         axs[0].legend()
         for i,energy in enumerate(energy_list):
@@ -197,12 +173,8 @@ class Trajectory():
 class Traj_Generator():
     def __init__(self,max_traj_length = 1000) -> None:
         self.max_traj_length = max_traj_length
-        self.x = torch.zeros((self.max_traj_length ,1))
-        self.y = torch.zeros((self.max_traj_length ,1))
-        self.z = torch.zeros((self.max_traj_length ,1))
-        self.vx = torch.zeros((self.max_traj_length ,1))
-        self.vy = torch.zeros((self.max_traj_length ,1))
-        self.vz = torch.zeros((self.max_traj_length ,1))
+        self.real_traj = torch.zeros((6,self.max_traj_length ,1))
+        self.obs_traj = torch.zeros((6,self.max_traj_length ,1))
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
         self.delta_t = 0.05 #step size in nseconds (0.5 cm)
@@ -211,63 +183,55 @@ class Traj_Generator():
         self.init_energy = energy
         self.init_teta = theta
         self.init_phi = phi
-        self.x[0]  = init_x
-        self.y[0]  = init_y
-        self.z[0]  = init_z
+        self.real_traj[SS_VARIABLE.X.value,0,:]  = init_x
+        self.real_traj[SS_VARIABLE.Y.value,0,:]  = init_y
+        self.real_traj[SS_VARIABLE.Z.value,0,:]  = init_z
         if energy is None:
-            self.vx[0] = init_vx
-            self.vz[0] = init_vy
-            self.vy[0] = init_vz
+            self.real_traj[SS_VARIABLE.Vx.value,0,:] = init_vx
+            self.real_traj[SS_VARIABLE.Vy.value,0,:] = init_vy
+            self.real_traj[SS_VARIABLE.Vz.value,0,:] = init_vz
         else:
             M_Ener = MASS_PROTON_AMU * 931.49401
             # E = sqrt(p^2+ M_ener^2) - M_ener
             p = torch.sqrt((energy + M_Ener)**2 - M_Ener**2) # MeV/c
             v = convert_momentum_to_velocity(p)
-            self.vx[0] = v * np.sin(theta) * np.cos(phi)
-            self.vy[0] = v * np.sin(theta) * np.sin(phi)
-            self.vz[0] = v * np.cos(theta)
+            self.real_traj[SS_VARIABLE.Vx.value,0,:] = v * np.sin(theta) * np.cos(phi)
+            self.real_traj[SS_VARIABLE.Vy.value,0,:] = v * np.sin(theta) * np.sin(phi)
+            self.real_traj[SS_VARIABLE.Vz.value,0,:] = v * np.cos(theta)
+        self.obs_traj[:,0,:] =  self.real_traj[:,0,:]
 
     def generate(self,energy=None,theta=None,phi = 0,init_x = 0,init_y = 0,init_z = 0,init_vx=None,init_vy=None,init_vz=None):
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
                              init_y=init_y,init_z=init_z,init_vx=init_vx,
                              init_vy=init_vy,init_vz=init_vz)
 
-        self.energy[0] = curr_energy = get_energy_from_velocities(self.vx[0],self.vy[0],self.vz[0])
+        self.energy[0] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,0,:],self.real_traj[SS_VARIABLE.Vy.value,0,:],self.real_traj[SS_VARIABLE.Vz.value,0,:])
         i=1
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
 
-            state_space_vector_prev= torch.tensor([self.x[i-1],self.y[i-1],self.z[i-1],self.vx[i-1],self.vy[i-1],self.vz[i-1]]).unsqueeze(0).unsqueeze(-1)
-            state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
-            self.x[i]  = state_space_vector_curr[:,SS_VARIABLE.X.value].item()
-            self.y[i]  = state_space_vector_curr[:,SS_VARIABLE.Y.value].item()
-            self.z[i]  = state_space_vector_curr[:,SS_VARIABLE.Z.value].item()
-            self.vx[i] = state_space_vector_curr[:,SS_VARIABLE.Vx.value].item()
-            self.vy[i] = state_space_vector_curr[:,SS_VARIABLE.Vy.value].item()
-            self.vz[i] = state_space_vector_curr[:,SS_VARIABLE.Vz.value].item()
-
+            state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
+            real_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=False)
+            obs_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=True)
+            self.real_traj[:,i] = real_state_space_vector_curr
+            self.obs_traj[:,i] = obs_state_space_vector_curr
 
             self.t[i] = i * self.delta_t
-            self.energy[i] = curr_energy = get_energy_from_velocities(self.vx[i],self.vy[i],self.vz[i])
-            distance_from_z_axis = torch.sqrt(self.x[i]**2 + self.y[i])
+            self.energy[i] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,i],
+                                                                      self.real_traj[SS_VARIABLE.Vy.value,i],
+                                                                      self.real_traj[SS_VARIABLE.Vz.value,i])
+            distance_from_z_axis = torch.sqrt(self.real_traj[SS_VARIABLE.Vx.value,i]**2 + self.real_traj[SS_VARIABLE.Y.value,i]**2)
             if distance_from_z_axis >= CHAMBER_RADIUS and i>2:
                 break
             i+=1
 
         traj_dict = {
             "t" : self.t[:i-1],
-            "x" : self.x[:i-1],
-            "y" : self.y[:i-1],
-            "z" : self.z[:i-1],
-            "vx" : self.vx[:i-1],
-            "vy" : self.vy[:i-1],
-            "vz" : self.vz[:i-1],
-            "px" : convert_velocity_to_momentum(self.vx[:i-1]),
-            "py" : convert_velocity_to_momentum(self.vy[:i-1]),
-            "pz" : convert_velocity_to_momentum(self.vz[:i-1]),
+            "real_traj" : self.real_traj[:,:i-1],
+            "obs_traj" : self.obs_traj[:,:i-1],
             "energy" : self.energy[:i-1],
         }
-        traj = Trajectory(real_traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
-        get_mx_0(traj.x_real)
+        traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
+        get_mx_0(traj.x_real.squeeze(-1))
         return traj
     
 def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
@@ -395,6 +359,17 @@ def get_energy_from_velocities(vx,vy,vz):
     energy = (gamma - 1) * 931.494028
     return energy 
 
+def get_velocity_from_energy(energy):
+    '''
+    Input : 
+        energy - [MeV]
+    Output :
+        v - [cm/ns]
+    '''
+    gamma = energy/931.494028 + 1
+    velocity = C * torch.sqrt(1-1/gamma**2) * M_S__TO__CM_NS
+    return velocity 
+
 def get_vel_deriv(vx,vy,vz,direction):
     '''
     Input : 
@@ -430,7 +405,7 @@ def get_vel_deriv(vx,vy,vz,direction):
     a *= M_S_SQUARED__TO__CM_NS_SQUARED
     return a
 
-def f(state_space_vector_prev,delta_t):
+def f(state_space_vector_prev,delta_t,add_straggling=False):
     '''
     INPUT:
         state_space_vector_prev - shape of [batch_size,space_vector_size,1]
@@ -482,13 +457,25 @@ def f(state_space_vector_prev,delta_t):
     k4vz = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='z')
 
     ##RK Final Step
-    vx = vx + (delta_t/6) * (k1vx+ 2*k2vx + 2*k3vx + k4vx)
-    vy = vy + (delta_t/6) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
-    vz = vz + (delta_t/6) * (k1vz + 2*k2vz + 2*k3vz + k4vz)
+    delta_vx = (delta_t/6) * (k1vx+ 2*k2vx + 2*k3vx + k4vx)
+    delta_vy = (delta_t/6) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
+    delta_vz = (delta_t/6) * (k1vz + 2*k2vz + 2*k3vz + k4vz)
+    vx = vx + delta_vx
+    vy = vy + delta_vy
+    vz = vz + delta_vz
 
-    x = x + (delta_t/6) * (k1x + 2*k2x + 2*k3x + k4x)
-    y = y + (delta_t/6) * (k1y + 2*k2y + 2*k3y + k4y)
-    z = z + (delta_t/6) * (k1z + 2*k2z + 2*k3z + k4z)
+    delta_x = (delta_t/6) * (k1x + 2*k2x + 2*k3x + k4x)
+    delta_y = (delta_t/6) * (k1y + 2*k2y + 2*k3y + k4y)
+    delta_z = (delta_t/6) * (k1z + 2*k2z + 2*k3z + k4z)
+    x = x + delta_x
+    y = y + delta_y
+    z = z + delta_z
+
+    if add_straggling: #only used in simulation not in KF
+        delta_energy = get_energy_from_velocities(delta_vx,delta_vy,delta_vz)
+        delta_pos = torch.sqrt(delta_x**2 + delta_y**2 + delta_z**2) #Since the step is small: arc length ~ distance between points
+        vx,vy,vz = add_energy_straggling(vx,vy,vz,delta_energy)
+        x,y,z = add_angular_straggling(x,y,z,get_energy_from_velocities(vx,vy,vz),delta_pos)
 
     state_space_vector_curr = torch.cat((x.reshape(-1,1),y.reshape(-1,1),z.reshape(-1,1),vx.reshape(-1,1),vy.reshape(-1,1),vz.reshape(-1,1)),dim=1).unsqueeze(-1)
     return state_space_vector_curr
@@ -506,32 +493,54 @@ def h(space_state_vector):
     obs_vector = torch.matmul(H,space_state_vector)
     return obs_vector
 
-def get_straggling(rho_diff):
-    interp_lateral_straggling = splev(rho_diff.detach(), RANGE_TO_LAT_STRAGGLING_TABLE)
-    interp_longitudinal_straggling = splev(rho_diff.detach(), RANGE_TO_LONG_STRAGGLING_TABLE)
-    return torch.tensor(interp_lateral_straggling),torch.tensor(interp_longitudinal_straggling)
+def add_energy_straggling(vx,vy,vz,delta_energy):
 
-def add_straggling_to_position(x,y,z,rho_diff):
-    #This function is called AFTER deaccel , meaning the mean was taken off now we just need to add the straggling
+    rr = torch.sqrt(vx**2 + vy**2 + vz**2) + 1e-6
+    az = torch.arctan2(vy,vx)
+    po = torch.arccos(vz/rr)
+
+    # Calculate Energy Straggling
+    c_factor = 14 * np.sqrt(0.5) #14 * sqrt((Z_p * Z_t) / (Z_p**-0.33 + Z_t**-0.33)) ---> Atomic # is 1
+    c_factor *= 1.65 * 2.35 #multiply by factor as in paper
+    energy_straggling_FWHM = delta_energy**0.53 * c_factor #FWHM
+    energy_straggling_std = energy_straggling_FWHM/(2*np.sqrt(2*np.log(2))) #Gaussian: FWHM = 2 * sqrt(2ln2) * std
+    energy_straggling = torch.randn(1) * energy_straggling_std
+
+    #add energy straggling
+    energy = get_energy_from_velocities(vx,vy,vz)
+    new_energy = energy + energy_straggling
+
+    #get new velocities
+    new_velocity = get_velocity_from_energy(new_energy)
+    new_vx = new_velocity*torch.sin(po)*torch.cos(az)
+    new_vy = new_velocity*torch.sin(po)*torch.sin(az)
+    new_vz = new_velocity*torch.cos(po)
+
+    return new_vx,new_vy,new_vz
+
+
+def add_angular_straggling(x,y,z,energy,dist_traveled):
+
+    #Calculate Angular Straggling
+    tau = 41.5e3 * GAS_MEDIUM_DENSITY * dist_traveled / (2) #M2 = Z1 = Z2 = 1 --> (M2(Z1**2/3 + Z2**2/3)) = 1
+    alpha_tag = 1*tau ** 0.55 if tau > 1000 else 0.92*tau**0.56
+    angular_straggling_FWHM = alpha_tag * np.sqrt(2) / (16.26 * energy)# Z1Z2 * sqrt(Z1**2/3 + Z2**2/3) = sqrt(2)
+    angular_straggling_std = angular_straggling_FWHM/(2*np.sqrt(2*np.log(2))) #Gaussian: FWHM = 2 * sqrt(2ln2) * std
+    angular_straggling_milirads = torch.randn(1) * angular_straggling_std
+    angular_straggling = angular_straggling_milirads * 1e-3 #convert from mili rads to rads
+
+
+    #Convert to spherical coordinates and add angular straggling
     radius = torch.sqrt(torch.pow(x,2) + torch.pow(y,2) + torch.pow(z,2))
     theta = torch.arctan2(y,x)
     phi = torch.arccos(z/radius)
 
-    lat_straggling,long_straggling = get_straggling(rho_diff)
+    new_theta = theta + angular_straggling
 
-    angle_stds = torch.arctan2(lat_straggling,radius)
-
-    delta_phi = torch.randn(1) *  angle_stds
-    delta_theta = torch.randn(1) *  angle_stds
-    delta_radius = torch.randn(1) *  long_straggling
-
-    new_radius = radius + delta_radius
-    new_theta = theta + delta_theta
-    new_phi  = phi + delta_phi
-
-    new_x = new_radius * torch.sin(new_theta) * torch.cos(new_phi)
-    new_y = new_radius * torch.sin(new_theta) * torch.sin(new_phi)
-    new_z = new_radius * torch.cos(new_theta)
+    #Convert back to cartesian coordinates
+    new_x = radius * torch.sin(new_theta) * torch.cos(phi)
+    new_y = radius * torch.sin(new_theta) * torch.sin(phi)
+    new_z = radius * torch.cos(new_theta)
 
     return new_x,new_y,new_z
 
@@ -545,7 +554,7 @@ def get_deacceleration(energy_interp):
     '''
     interp_stopping_power = splev(energy_interp.detach(), ENERGY_TO_STOPPING_POWER_TABLE)#MeV/(mg/cm2)
 
-    interp_stopping_force =interp_stopping_power * 1.6021773349e-13 * GAS_MEDIUM_DENSITY * 100
+    interp_stopping_force =interp_stopping_power * 1.6021773349e-13 * GAS_MEDIUM_DENSITY / CM__TO__M
     interp_stopping_acc = interp_stopping_force / MASS_PROTON_KG
     return interp_stopping_acc.float()
 
