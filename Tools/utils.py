@@ -539,7 +539,7 @@ def add_angular_straggling(x,y,z,energy,dist_traveled):
 
     print(angular_straggling)
 
-    new_theta = theta
+    new_theta = theta + angular_straggling
 
     #Convert back to cartesian coordinates
     new_x = radius * torch.sin(new_theta) * torch.cos(phi)
