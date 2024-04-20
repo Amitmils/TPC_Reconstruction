@@ -215,6 +215,8 @@ class Traj_Generator():
             self.real_traj[:,i] = real_state_space_vector_curr
             self.obs_traj[:,i] = obs_state_space_vector_curr
 
+            print(f"{i} : {torch.norm(real_state_space_vector_curr-obs_state_space_vector_curr)}")
+
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vy.value,i],
@@ -532,10 +534,12 @@ def add_angular_straggling(x,y,z,energy,dist_traveled):
 
     #Convert to spherical coordinates and add angular straggling
     radius = torch.sqrt(torch.pow(x,2) + torch.pow(y,2) + torch.pow(z,2))
-    theta = torch.arctan2(y,x)
-    phi = torch.arccos(z/radius)
+    phi = torch.arctan2(y,x)
+    theta = torch.arccos(z/radius)
 
-    new_theta = theta + angular_straggling
+    print(angular_straggling)
+
+    new_theta = theta
 
     #Convert back to cartesian coordinates
     new_x = radius * torch.sin(new_theta) * torch.cos(phi)
