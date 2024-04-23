@@ -370,7 +370,7 @@ def get_velocity_from_energy(energy):
     velocity = C * torch.sqrt(1-1/gamma**2) * M_S__TO__CM_NS
     return velocity 
 
-def get_vel_deriv(vx,vy,vz,direction):
+def get_vel_deriv(vx,vy,vz,direction,delta_t,add_energy_straggling=False):
     '''
     Input : 
         vx - [cm/ns]
@@ -385,7 +385,8 @@ def get_vel_deriv(vx,vy,vz,direction):
     temp_vx = vx * CM_NS__TO__M_S
     temp_vy = vy * CM_NS__TO__M_S
     temp_vz = vz * CM_NS__TO__M_S
-    deaccel = get_deacceleration(energy)
+    diff_pos = np.sqrt((delta_t*vx)**2 + (delta_t*vy)**2 + (delta_t*vz)**2) #Rough estimate distance traveled with current velocities - needed for energy straggling
+    deaccel = get_deacceleration(energy,add_energy_straggling,diff_pos)
     Bx = 0
     By = 0
     Bz = B
@@ -407,10 +408,13 @@ def get_vel_deriv(vx,vy,vz,direction):
 
 def f(state_space_vector_prev,delta_t,add_straggling=False):
     '''
+    DESCRIPTION:
+        RK4 Propagation
+        In order to add energy straggling, we need to get the distance traveled with each f1/f2/f3, therefore we also 
+        calculate RK1/RK2/Rk3 step to get a estimated distance traveled.
     INPUT:
         state_space_vector_prev - shape of [batch_size,space_vector_size,1]
         delta_t - RK step
-    
     '''
     x = state_space_vector_prev[:,SS_VARIABLE.X.value]
     y = state_space_vector_prev[:,SS_VARIABLE.Y.value]
@@ -424,58 +428,57 @@ def f(state_space_vector_prev,delta_t,add_straggling=False):
     k1y = vy
     k1z = vz
 
-    k1vx = get_vel_deriv(vx,vy,vz,direction='x')
-    k1vy = get_vel_deriv(vx,vy,vz,direction='y')
-    k1vz = get_vel_deriv(vx,vy,vz,direction='z')
+    k1vx = get_vel_deriv(vx,vy,vz,direction='x',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k1vy = get_vel_deriv(vx,vy,vz,direction='y',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k1vz = get_vel_deriv(vx,vy,vz,direction='z',delta_t=delta_t,add_energy_straggling=add_straggling)
 
     ## f2 ##
     k2x = vx + 0.5 * delta_t * k1vx
     k2y = vy + 0.5 * delta_t * k1vy
     k2z = vz + 0.5 * delta_t * k1vz
 
-
-    k2vx = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='x')
-    k2vy = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='y')
-    k2vz = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='z')
+    k2vx = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='x',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k2vy = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='y',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k2vz = get_vel_deriv(vx + 0.5*delta_t*k1vx,vy + 0.5*delta_t*k1vy,vz+ 0.5*delta_t*k1vz,direction='z',delta_t=delta_t,add_energy_straggling=add_straggling)
 
     ## f3 ##
     k3x = vx + 0.5 * delta_t * k2vx
     k3y = vy + 0.5 * delta_t * k2vy
     k3z = vz + 0.5 * delta_t * k2vz
 
-    k3vx = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='x')
-    k3vy = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='y')
-    k3vz = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='z')
+    k3vx = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='x',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k3vy = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='y',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k3vz = get_vel_deriv(vx + 0.5*delta_t*k2vx,vy + 0.5*delta_t*k2vy,vz+ 0.5*delta_t*k2vz,direction='z',delta_t=delta_t,add_energy_straggling=add_straggling)
 
     ## f4 ##
     k4x = vx + delta_t * k3vx
     k4y = vy + delta_t * k3vy
     k4z = vz + delta_t * k3vz
 
-    k4vx = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='x')
-    k4vy = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='y')
-    k4vz = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='z')
+    k4vx = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='x',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k4vy = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='y',delta_t=delta_t,add_energy_straggling=add_straggling)
+    k4vz = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='z',delta_t=delta_t,add_energy_straggling=add_straggling)
 
-    ##RK Final Step
+    ##RK Final Step 
     delta_vx = (delta_t/6) * (k1vx+ 2*k2vx + 2*k3vx + k4vx)
     delta_vy = (delta_t/6) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
     delta_vz = (delta_t/6) * (k1vz + 2*k2vz + 2*k3vz + k4vz)
+
     vx = vx + delta_vx
     vy = vy + delta_vy
     vz = vz + delta_vz
 
-    delta_x = (delta_t/6) * (k1x + 2*k2x + 2*k3x + k4x)
-    delta_y = (delta_t/6) * (k1y + 2*k2y + 2*k3y + k4y)
-    delta_z = (delta_t/6) * (k1z + 2*k2z + 2*k3z + k4z)
-    x = x + delta_x
-    y = y + delta_y
-    z = z + delta_z
+    d4_x = (delta_t/6) * (k1x + 2*k2x + 2*k3x + k4x)
+    d4_y = (delta_t/6) * (k1y + 2*k2y + 2*k3y + k4y)
+    d4_z = (delta_t/6) * (k1z + 2*k2z + 2*k3z + k4z)
+    RK4_diff_pos = torch.sqrt(d4_x**2 + d4_y**2 + d4_z**2)
+
+    x = x + d4_x
+    y = y + d4_y
+    z = z + d4_z
 
     if add_straggling: #only used in simulation not in KF
-        delta_energy = get_energy_from_velocities(delta_vx,delta_vy,delta_vz)
-        delta_pos = torch.sqrt(delta_x**2 + delta_y**2 + delta_z**2) #Since the step is small: arc length ~ distance between points
-        vx,vy,vz = add_energy_straggling(vx,vy,vz,delta_energy)
-        x,y,z = add_angular_straggling(x,y,z,get_energy_from_velocities(vx,vy,vz),delta_pos)
+        x,y,z = add_angular_straggling(x,y,z,get_energy_from_velocities(vx,vy,vz),RK4_diff_pos)
 
     state_space_vector_curr = torch.cat((x.reshape(-1,1),y.reshape(-1,1),z.reshape(-1,1),vx.reshape(-1,1),vy.reshape(-1,1),vz.reshape(-1,1)),dim=1).unsqueeze(-1)
     return state_space_vector_curr
@@ -493,11 +496,7 @@ def h(space_state_vector):
     obs_vector = torch.matmul(H,space_state_vector)
     return obs_vector
 
-def add_energy_straggling(vx,vy,vz,delta_energy):
-
-    rr = torch.sqrt(vx**2 + vy**2 + vz**2) + 1e-6
-    az = torch.arctan2(vy,vx)
-    po = torch.arccos(vz/rr)
+def get_energy_straggling(delta_energy):
 
     # Calculate Energy Straggling
     c_factor = 14 * np.sqrt(0.5) #14 * sqrt((Z_p * Z_t) / (Z_p**-0.33 + Z_t**-0.33)) ---> Atomic # is 1
@@ -506,18 +505,7 @@ def add_energy_straggling(vx,vy,vz,delta_energy):
     energy_straggling_std = energy_straggling_FWHM/(2*np.sqrt(2*np.log(2))) #Gaussian: FWHM = 2 * sqrt(2ln2) * std
     energy_straggling = torch.randn(1) * energy_straggling_std
 
-    #add energy straggling
-    energy = get_energy_from_velocities(vx,vy,vz)
-    new_energy = energy + energy_straggling
-
-    #get new velocities
-    new_velocity = get_velocity_from_energy(new_energy)
-    new_vx = new_velocity*torch.sin(po)*torch.cos(az)
-    new_vy = new_velocity*torch.sin(po)*torch.sin(az)
-    new_vz = new_velocity*torch.cos(po)
-
-    return new_vx,new_vy,new_vz
-
+    return energy_straggling * 1e-3 #convert from KeV to MeV
 
 def add_angular_straggling(x,y,z,energy,dist_traveled):
 
@@ -545,7 +533,7 @@ def add_angular_straggling(x,y,z,energy,dist_traveled):
     return new_x,new_y,new_z
 
 
-def get_deacceleration(energy_interp):
+def get_deacceleration(energy_interp,add_energy_straggling,delta_pos):
     '''
     Input : 
         energy_interp - [MeV]
@@ -554,7 +542,12 @@ def get_deacceleration(energy_interp):
     '''
     interp_stopping_power = splev(energy_interp.detach(), ENERGY_TO_STOPPING_POWER_TABLE)#MeV/(mg/cm2)
 
-    interp_stopping_force =interp_stopping_power * 1.6021773349e-13 * GAS_MEDIUM_DENSITY / CM__TO__M
+    if add_energy_straggling:
+        energy_loss = interp_stopping_power * GAS_MEDIUM_DENSITY * delta_pos.numpy()
+        energy_straggling = get_energy_straggling(energy_loss)
+        interp_stopping_power = (energy_straggling + energy_loss) / (GAS_MEDIUM_DENSITY * delta_pos)
+
+    interp_stopping_force =interp_stopping_power * 1.6021773349e-13 * GAS_MEDIUM_DENSITY / CM__TO__M #MeV/m
     interp_stopping_acc = interp_stopping_force / MASS_PROTON_KG
     return interp_stopping_acc.float()
 
