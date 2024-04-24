@@ -194,8 +194,9 @@ class AtTpcMap:
                     self.fill_coord(pad_index, tmp_pad_x_off, pad_y_off, small_tri_side, ort)
                     pad_index += 1
 
+        #mirror
         for i in range(pad_index):
-            for j in range(3):
+            for j in range(4):
                 self.AtPadCoord[i + pad_index][j][0] = self.AtPadCoord[i][j][0]
                 self.AtPadCoord[i + pad_index][j][1] = -self.AtPadCoord[i][j][1]
 
