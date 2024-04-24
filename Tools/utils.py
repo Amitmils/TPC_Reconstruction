@@ -85,6 +85,132 @@ class CONFIG():
             setattr(self,key,value)
         return data
 
+class AtTpcMap:
+    def __init__(self):
+        self.fPadPlane = None
+        self.kIsParsed = False
+        self.fNumberPads = 10240
+        self.AtPadCoord = np.zeros((self.fNumberPads, 4, 2), dtype=np.float32)
+
+    def fill_coord(self, index, x, y, side, ort):
+        # Left
+        self.AtPadCoord[index][0][0] = x
+        self.AtPadCoord[index][0][1] = y
+        # Tip
+        self.AtPadCoord[index][1][0] = x + side / 2
+        self.AtPadCoord[index][1][1] = y + ort * side * np.sqrt(3) / 2
+        # Right
+        self.AtPadCoord[index][2][0] = x + side
+        self.AtPadCoord[index][2][1] = y
+        # Center 
+        self.AtPadCoord[index][3][0] = self.AtPadCoord[index][1][0]
+        self.AtPadCoord[index][3][1] = self.AtPadCoord[index][1][1]/2
+
+    def find_associated_pad(self,particle_xy_pos):
+        mid_points_of_pad = self.AtPadCoord [:,-1,:]
+        distances_from_pads = np.sum((mid_points_of_pad - particle_xy_pos)**2,axis=1)
+        closest_pad_id = np.argmin(distances_from_pads)
+        new_particle_xy_pos = mid_points_of_pad[closest_pad_id,:]
+        return new_particle_xy_pos
+
+    def GeneratePadPlane(self):
+
+        small_z_spacing = 2 * 2.54 / 1000
+        small_tri_side = 184. * 2.54 / 1000
+        umega_radius = 10826.772 * 2.54 /1000
+        # beam_image_radius = 4842.52 * 2.54 / 1000. #Legacy
+
+        small_x_spacing = 2. * small_z_spacing / np.sqrt(3.)
+        small_y_spacing = small_x_spacing * np.sqrt(3.)
+        dotted_s_tri_side = 4. * small_x_spacing + small_tri_side
+        dotted_s_tri_hi = dotted_s_tri_side * np.sqrt(3.) / 2.
+        dotted_l_tri_side = 2. * dotted_s_tri_side
+        dotted_l_tri_hi = dotted_l_tri_side * np.sqrt(3.) / 2.
+        large_x_spacing = small_x_spacing
+        large_y_spacing = small_y_spacing
+        large_tri_side = dotted_l_tri_side - 4. * large_x_spacing
+        large_tri_hi = dotted_l_tri_side * np.sqrt(3.) / 2.
+
+        # num_rows = 2 ** np.ceil(np.log(beam_image_radius / dotted_s_tri_side) / np.log(2.0)) #Legacy
+        num_rows = np.floor(umega_radius / dotted_l_tri_hi)
+
+        xoff = 0.
+        yoff = 0.
+
+        pad_index = 0
+        for j in range(int(num_rows)):
+            pads_in_half_hex = 0
+            pads_in_hex = 0
+            row_length = np.abs(np.sqrt(umega_radius**2 - (j * dotted_l_tri_hi + dotted_l_tri_hi / 2.)**2))
+
+            #If row contains small pads
+            if j < num_rows/2:
+                pads_in_half_hex = (2 * num_rows - 2 * j) / 4.
+                pads_in_hex = 2 * num_rows - 1. - 2. * j
+
+            pads_in_half_row = row_length / dotted_l_tri_side
+            pads_out_half_hex = int(np.round(2 * (pads_in_half_row - pads_in_half_hex)))
+            pads_in_row = 2 * pads_out_half_hex + 4 * pads_in_half_hex - 1
+
+            ort = 1
+
+            for i in range(int(pads_in_row)):
+                if i == 0:
+                    if j % 2 == 0:
+                        ort = -1
+                    if ((pads_in_row - 1) / 2) % 2 == 1:
+                        ort = -ort
+                else:
+                    ort = -ort
+
+                pad_x_off = -(pads_in_half_hex + pads_out_half_hex / 2.) * dotted_l_tri_side + i * dotted_l_tri_side / 2. + 2. * large_x_spacing + xoff
+
+                if i < pads_out_half_hex or i > (pads_in_hex + pads_out_half_hex - 1) or j > (num_rows / 2. - 1):
+                    pad_y_off = j * dotted_l_tri_hi + large_y_spacing + yoff
+                    if ort == -1:
+                        pad_y_off += large_tri_hi
+
+                    self.fill_coord(pad_index, pad_x_off, pad_y_off, large_tri_side, ort)
+                    pad_index += 1
+    
+                    
+                else:
+                    pad_y_off = j * dotted_l_tri_hi + large_y_spacing + yoff
+                    if ort == -1:
+                        pad_y_off = j * dotted_l_tri_hi + 2 * dotted_s_tri_hi - small_y_spacing + yoff
+                    self.fill_coord(pad_index, pad_x_off, pad_y_off, small_tri_side, ort)
+                    pad_index += 1
+
+                    tmp_pad_x_off = pad_x_off + dotted_s_tri_side / 2.
+                    tmp_pad_y_off = pad_y_off + ort * dotted_s_tri_hi - 2 * ort * small_y_spacing
+                    self.fill_coord(pad_index, tmp_pad_x_off, tmp_pad_y_off, small_tri_side, -ort)
+                    pad_index += 1
+
+                    tmp_pad_y_off = pad_y_off + ort * dotted_s_tri_hi
+                    self.fill_coord(pad_index, tmp_pad_x_off, tmp_pad_y_off, small_tri_side, ort)
+                    pad_index += 1
+
+                    tmp_pad_x_off = pad_x_off + dotted_s_tri_side
+                    self.fill_coord(pad_index, tmp_pad_x_off, pad_y_off, small_tri_side, ort)
+                    pad_index += 1
+
+        for i in range(pad_index):
+            for j in range(3):
+                self.AtPadCoord[i + pad_index][j][0] = self.AtPadCoord[i][j][0]
+                self.AtPadCoord[i + pad_index][j][1] = -self.AtPadCoord[i][j][1]
+
+    def draw_pads(self):
+        fig, ax = plt.subplots()
+
+        for pad_coord in self.AtPadCoord:
+            pad_coords = [(x, y) for x, y in pad_coord[:3]]
+            pad = Polygon(pad_coords, edgecolor='black', facecolor='none')
+            ax.add_patch(pad)
+
+        ax.set_aspect('equal')
+        ax.autoscale()
+        plt.show()
+
 class Trajectory():
     def __init__(self,traj_data,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,init_energy=None,init_teta=None,init_phi=None,delta_t=None) -> None:
         assert delta_t is not None or len(traj_data['t']) > 0, "delta_t or time stamps are needed for propagation function!"
@@ -650,148 +776,14 @@ def test():
         if torch.eq(torch.round(true*100)/100,torch.round(propagation*100)/100).all().item() != True:
             print("ERROR")
     
-
-class AtTpcMap:
-    def __init__(self):
-        self.fPadPlane = None
-        self.kIsParsed = False
-        self.fNumberPads = 10240
-        self.AtPadCoord = np.zeros((self.fNumberPads, 4, 2), dtype=np.float32)
-
-    def fill_coord(self, index, x, y, side, ort):
-        # Left
-        self.AtPadCoord[index][0][0] = x
-        self.AtPadCoord[index][0][1] = y
-        # Tip
-        self.AtPadCoord[index][1][0] = x + side / 2
-        self.AtPadCoord[index][1][1] = y + ort * side * np.sqrt(3) / 2
-        # Right
-        self.AtPadCoord[index][2][0] = x + side
-        self.AtPadCoord[index][2][1] = y
-        # Center 
-        self.AtPadCoord[index][3][0] = self.AtPadCoord[index][1][0]
-        self.AtPadCoord[index][3][1] = self.AtPadCoord[index][1][1]/2
-
-    def find_associated_pad(self,particle_xy_pos):
-        mid_points_of_pad = self.AtPadCoord [:,-1,:]
-        distances_from_pads = np.sum((mid_points_of_pad - particle_xy_pos)**2,axis=1)
-        closest_pad_id = np.argmin(distances_from_pads)
-        new_particle_xy_pos = mid_points_of_pad[closest_pad_id,:]
-        return new_particle_xy_pos
-
-    def GeneratePadPlane(self):
-        if self.fPadPlane:
-            print("Skipping generation of pad plane because it was already parsed!")
-            return
-
-        print("ATTPC Map: Generating the map geometry of the ATTPC")
-
-        small_z_spacing = 2 * 2.54 / 1000
-        small_tri_side = 184. * 2.54 / 1000
-        umega_radius = 10826.772 * 2.54 /1000
-        # beam_image_radius = 4842.52 * 2.54 / 1000. #Legacy
-
-        small_x_spacing = 2. * small_z_spacing / np.sqrt(3.)
-        small_y_spacing = small_x_spacing * np.sqrt(3.)
-        dotted_s_tri_side = 4. * small_x_spacing + small_tri_side
-        dotted_s_tri_hi = dotted_s_tri_side * np.sqrt(3.) / 2.
-        dotted_l_tri_side = 2. * dotted_s_tri_side
-        dotted_l_tri_hi = dotted_l_tri_side * np.sqrt(3.) / 2.
-        large_x_spacing = small_x_spacing
-        large_y_spacing = small_y_spacing
-        large_tri_side = dotted_l_tri_side - 4. * large_x_spacing
-        large_tri_hi = dotted_l_tri_side * np.sqrt(3.) / 2.
-
-        # num_rows = 2 ** np.ceil(np.log(beam_image_radius / dotted_s_tri_side) / np.log(2.0)) #Legacy
-        num_rows = np.floor(umega_radius / dotted_l_tri_hi)
-
-        xoff = 0.
-        yoff = 0.
-
-        pad_index = 0
-        for j in range(int(num_rows)):
-            pads_in_half_hex = 0
-            pads_in_hex = 0
-            row_length = np.abs(np.sqrt(umega_radius**2 - (j * dotted_l_tri_hi + dotted_l_tri_hi / 2.)**2))
-
-            #If row contains small pads
-            if j < num_rows/2:
-                pads_in_half_hex = (2 * num_rows - 2 * j) / 4.
-                pads_in_hex = 2 * num_rows - 1. - 2. * j
-
-            pads_in_half_row = row_length / dotted_l_tri_side
-            pads_out_half_hex = int(np.round(2 * (pads_in_half_row - pads_in_half_hex)))
-            pads_in_row = 2 * pads_out_half_hex + 4 * pads_in_half_hex - 1
-
-            ort = 1
-
-            for i in range(int(pads_in_row)):
-                if i == 0:
-                    if j % 2 == 0:
-                        ort = -1
-                    if ((pads_in_row - 1) / 2) % 2 == 1:
-                        ort = -ort
-                else:
-                    ort = -ort
-
-                pad_x_off = -(pads_in_half_hex + pads_out_half_hex / 2.) * dotted_l_tri_side + i * dotted_l_tri_side / 2. + 2. * large_x_spacing + xoff
-
-                if i < pads_out_half_hex or i > (pads_in_hex + pads_out_half_hex - 1) or j > (num_rows / 2. - 1):
-                    pad_y_off = j * dotted_l_tri_hi + large_y_spacing + yoff
-                    if ort == -1:
-                        pad_y_off += large_tri_hi
-
-                    self.fill_coord(pad_index, pad_x_off, pad_y_off, large_tri_side, ort)
-                    pad_index += 1
-    
-                    
-                else:
-                    pad_y_off = j * dotted_l_tri_hi + large_y_spacing + yoff
-                    if ort == -1:
-                        pad_y_off = j * dotted_l_tri_hi + 2 * dotted_s_tri_hi - small_y_spacing + yoff
-                    self.fill_coord(pad_index, pad_x_off, pad_y_off, small_tri_side, ort)
-                    pad_index += 1
-
-                    tmp_pad_x_off = pad_x_off + dotted_s_tri_side / 2.
-                    tmp_pad_y_off = pad_y_off + ort * dotted_s_tri_hi - 2 * ort * small_y_spacing
-                    self.fill_coord(pad_index, tmp_pad_x_off, tmp_pad_y_off, small_tri_side, -ort)
-                    pad_index += 1
-
-                    tmp_pad_y_off = pad_y_off + ort * dotted_s_tri_hi
-                    self.fill_coord(pad_index, tmp_pad_x_off, tmp_pad_y_off, small_tri_side, ort)
-                    pad_index += 1
-
-                    tmp_pad_x_off = pad_x_off + dotted_s_tri_side
-                    self.fill_coord(pad_index, tmp_pad_x_off, pad_y_off, small_tri_side, ort)
-                    pad_index += 1
-
-        for i in range(pad_index):
-            for j in range(3):
-                self.AtPadCoord[i + pad_index][j][0] = self.AtPadCoord[i][j][0]
-                self.AtPadCoord[i + pad_index][j][1] = -self.AtPadCoord[i][j][1]
-
-        print("created pads:", pad_index + pad_index)
-        self.find_associated_pad(np.array([1,2]))
-
-    def draw_pads(self):
-        fig, ax = plt.subplots()
-
-        for pad_coord in self.AtPadCoord:
-            pad_coords = [(x, y) for x, y in pad_coord[:3]]
-            pad = Polygon(pad_coords, edgecolor='black', facecolor='none')
-            ax.add_patch(pad)
-
-        ax.set_aspect('equal')
-        ax.autoscale()
-        plt.show()
 if __name__ == "__main__":
-    pad = AtTpcMap()
-    pad.GeneratePadPlane()
-    pad.draw_pads()
+    # pad = AtTpcMap()
+    # pad.GeneratePadPlane()
+    # pad.draw_pads()
     # generate_dataset(N_Train=150,N_CV=25,N_Test=25,dataset_name="No_Deaccel")
-    # gen = Traj_Generator()
-    # traj = gen.generate(energy=2,theta=1,phi=1.46)
-    # traj.traj_plots([Trajectory_SS_Type.Real,Trajectory_SS_Type.Observed])
+    gen = Traj_Generator()
+    traj = gen.generate(energy=2,theta=1,phi=1.46)
+    traj.traj_plots([Trajectory_SS_Type.Real,Trajectory_SS_Type.Observed])
     # df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
     # df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)
     # gen.save_csv(traj_data)
