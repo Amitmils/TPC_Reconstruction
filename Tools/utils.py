@@ -109,7 +109,7 @@ class AtTpcMap:
     def find_associated_pad(self,x,y):
         particle_xy_pos = np.array([x.item(),y.item()])
         mid_points_of_pad = self.AtPadCoord[:,-1,:]
-        distances_from_pads = np.sum((mid_points_of_pad - particle_xy_pos)**2,axis=1)
+        distances_from_pads = np.sum(np.abs(mid_points_of_pad - particle_xy_pos),axis=1)
         closest_pad_id = np.argmin(distances_from_pads)
         new_particle_xy_pos = mid_points_of_pad[closest_pad_id,:]
         new_x = torch.tensor(new_particle_xy_pos[0])
@@ -792,9 +792,8 @@ if __name__ == "__main__":
     gen = Traj_Generator()
     traj = gen.generate(energy=2,theta=1,phi=1.46)
     traj.traj_plots([Trajectory_SS_Type.Real,Trajectory_SS_Type.Observed])
-    # df = pd.DataFrame(traj.x_real.numpy().T,columns = ['x','y','z','vx','vy','vz'])
-    # df.to_csv('debug_traj_energy_30_teta_1_phi_0.csv', index=False)
-    # gen.save_csv(traj_data)
+    df = pd.DataFrame(traj.y.squeeze(-1).numpy().T,columns = ['x','y','z','vx','vy','vz'])
+    df.to_csv('debug_traj_energy_2_teta_1_phi_0.csv', index=False)
 
 
 
