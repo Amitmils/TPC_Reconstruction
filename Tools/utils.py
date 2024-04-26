@@ -106,12 +106,15 @@ class AtTpcMap:
         self.AtPadCoord[index][3][0] = self.AtPadCoord[index][1][0]
         self.AtPadCoord[index][3][1] = self.AtPadCoord[index][1][1]/2
 
-    def find_associated_pad(self,particle_xy_pos):
-        mid_points_of_pad = self.AtPadCoord [:,-1,:]
+    def find_associated_pad(self,x,y):
+        particle_xy_pos = np.array([x.item(),y.item()])
+        mid_points_of_pad = self.AtPadCoord[:,-1,:]
         distances_from_pads = np.sum((mid_points_of_pad - particle_xy_pos)**2,axis=1)
         closest_pad_id = np.argmin(distances_from_pads)
         new_particle_xy_pos = mid_points_of_pad[closest_pad_id,:]
-        return new_particle_xy_pos
+        new_x = torch.tensor(new_particle_xy_pos[0])
+        new_y = torch.tensor(new_particle_xy_pos[1])
+        return new_x , new_y
 
     def GeneratePadPlane(self):
 
@@ -231,7 +234,7 @@ class Trajectory():
         self.x_estimated_BW = torch.zeros_like(self.x_real)
         self.energy_estimated_FW = torch.zeros_like(self.x_real)
         self.energy_estimated_BW = torch.zeros_like(self.x_real)
-    
+
     def set_name(self,name):
         self.traj_name = name
 
@@ -306,6 +309,9 @@ class Traj_Generator():
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
         self.delta_t = 0.05 #step size in nseconds (0.5 cm)
+        self.ATTPC_pad = AtTpcMap()
+        self.ATTPC_pad.GeneratePadPlane()
+
 
     def set_init_values(self,energy=None,theta=None,init_vx=None,init_vy=None,init_vz=None,phi=0,init_x=0,init_y=0,init_z=0):
         self.init_energy = energy
@@ -338,8 +344,8 @@ class Traj_Generator():
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
 
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
-            real_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=False)
-            obs_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=True)
+            real_state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
+            obs_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=True,add_sensor_granularity=True,sensor_pads=self.ATTPC_pad)
             self.real_traj[:,i] = real_state_space_vector_curr
             self.obs_traj[:,i] = obs_state_space_vector_curr
 
@@ -534,7 +540,7 @@ def get_vel_deriv(vx,vy,vz,direction,delta_t,add_energy_straggling=False):
     a *= M_S_SQUARED__TO__CM_NS_SQUARED
     return a
 
-def f(state_space_vector_prev,delta_t,add_straggling=False):
+def f(state_space_vector_prev,delta_t,add_straggling : bool = False,add_sensor_granularity : bool = False, sensor_pads : AtTpcMap = None):
     '''
     DESCRIPTION:
         RK4 Propagation
@@ -605,8 +611,12 @@ def f(state_space_vector_prev,delta_t,add_straggling=False):
     y = y + d4_y
     z = z + d4_z
 
-    if add_straggling: #only used in simulation not in KF
+    if add_straggling: #only used in generation not in KF
         x,y,z = add_angular_straggling(x,y,z,get_energy_from_velocities(vx,vy,vz),RK4_diff_pos)
+
+    if add_sensor_granularity:#only used in generation not in KF
+        assert sensor_pads is not None, "No Sensor Pad Given!"
+        x,y = sensor_pads.find_associated_pad(x,y)
 
     state_space_vector_curr = torch.cat((x.reshape(-1,1),y.reshape(-1,1),z.reshape(-1,1),vx.reshape(-1,1),vy.reshape(-1,1),vz.reshape(-1,1)),dim=1).unsqueeze(-1)
     return state_space_vector_curr
@@ -778,9 +788,6 @@ def test():
             print("ERROR")
     
 if __name__ == "__main__":
-    # pad = AtTpcMap()
-    # pad.GeneratePadPlane()
-    # pad.draw_pads()
     # generate_dataset(N_Train=150,N_CV=25,N_Test=25,dataset_name="No_Deaccel")
     gen = Traj_Generator()
     traj = gen.generate(energy=2,theta=1,phi=1.46)
