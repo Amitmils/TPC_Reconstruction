@@ -14,7 +14,6 @@ from skimage.measure import CircleModel,LineModelND, ransac
 from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
-import time
 
 
 #  https://skisickness.com/2010/04/relativistic-kinematics-calculator/
@@ -45,32 +44,6 @@ class Trajectory_SS_Type(enum.Enum):
     Estimated_BW = "Estimated BW SS"
     Observed = "Observed"
 
-Q_PROTON = torch.tensor(1.6022*1e-19)
-MASS_PROTON_KG = torch.tensor(1.6726*1e-27)
-MASS_PROTON_AMU = torch.tensor(1.0072766)
-CM_NS__TO__M_S = 1e7
-M_S__TO__CM_NS = 1e-7
-M_S_SQUARED__TO__CM_NS_SQUARED = 100 * (1e-9)**2
-CM__TO__M = 0.01
-B = 2.85 #Applied Magnetic Field (T)
-E = torch.cos((Q_PROTON*B)/MASS_PROTON_KG) * 500 #Applied Electric Field (V/m)
-ATOMIC_NUMBER = 1
-C = 3*1e8
-CHAMBER_RADIUS  = 25 #cm
-GAS_MEDIUM_DENSITY = 3.3e-5 * 1000 #mg/cm3 at 1 bar
-
-
-
-data = np.loadtxt("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Tools/stpHydrogen_new.txt",skiprows=1, dtype=float)
-energy_col = data[:, 0]  # First column [MeV]
-stopping_power_col = data[:, 1]  # Second column [MeV / (mg/cm2)]
-range_col = data[:, 2]  # third column [cm]
-longitudinal_straggling_col = data[:, 3]  # fourth column [cm]
-lateral_straggling_col = data[:, 4]  # fifth column [cm]
-
-ENERGY_TO_STOPPING_POWER_TABLE= splrep(energy_col, stopping_power_col)
-
-
 class CONFIG():
     def __init__(self,config_path) -> None:
         self.parse_config(config_path)
@@ -85,6 +58,34 @@ class CONFIG():
         for key,value in data.items():
             setattr(self,key,value)
         return data
+    
+simulation_config= CONFIG("Tools/simulation_config.yaml")
+
+# Physical quantities needed
+Q_PROTON = torch.tensor(1.6022*1e-19)
+MASS_PROTON_KG = torch.tensor(1.6726*1e-27)
+MASS_PROTON_AMU = torch.tensor(1.0072766)
+ATOMIC_NUMBER = 1
+C = 3*1e8
+
+#Setup Chamber parameters
+B = simulation_config.magnetic_field #Applied Magnetic Field (T)
+E = torch.cos((Q_PROTON*B)/MASS_PROTON_KG) * simulation_config.electric_field #Applied Electric Field (V/m)
+GAS_MEDIUM_DENSITY = 3.3e-5 * 1000 #mg/cm3 at 1 bar
+
+# Conversion macros
+CM_NS__TO__M_S = 1e7
+M_S__TO__CM_NS = 1e-7
+CM__TO__M = 0.01
+M_S_SQUARED__TO__CM_NS_SQUARED = 100 * (1e-9)**2
+
+data = np.loadtxt(simulation_config.stopping_power_table_path,skiprows=1, dtype=float)
+energy_col = data[:, 0]  # First column [MeV]
+stopping_power_col = data[:, 1]  # Second column [MeV / (mg/cm2)]
+range_col = data[:, 2]  # third column [cm]
+longitudinal_straggling_col = data[:, 3]  # fourth column [cm]
+lateral_straggling_col = data[:, 4]  # fifth column [cm]
+ENERGY_TO_STOPPING_POWER_TABLE= splrep(energy_col, stopping_power_col)
 
 class AtTpcMap:
     def __init__(self):
@@ -142,9 +143,9 @@ class AtTpcMap:
 
     def GeneratePadPlane(self):
 
-        small_z_spacing = 2 * 2.54 / 1000
-        small_tri_side = 184. * 2.54 / 1000
-        umega_radius = 10826.772 * 2.54 /1000
+        small_z_spacing = simulation_config.small_z_spacing
+        small_tri_side = simulation_config.small_tri_side
+        umega_radius = simulation_config.umega_radius
         # beam_image_radius = 4842.52 * 2.54 / 1000. #Legacy
 
         small_x_spacing = 2. * small_z_spacing / np.sqrt(3.)
@@ -180,7 +181,6 @@ class AtTpcMap:
             pads_in_row = 2 * pads_out_half_hex + 4 * pads_in_half_hex - 1
 
             ort = 1
-
             for i in range(int(pads_in_row)):
                 if i == 0:
                     if j % 2 == 0:
@@ -226,7 +226,7 @@ class AtTpcMap:
                 self.AtPadCoord[i + pad_index][j][0] = self.AtPadCoord[i][j][0]
                 self.AtPadCoord[i + pad_index][j][1] = -self.AtPadCoord[i][j][1]
 
-    def draw_pads(self,show=True):
+    def draw_pads(self,show=True,plot_energy = False):
         fig, ax = plt.subplots()
 
         x = []
@@ -243,14 +243,13 @@ class AtTpcMap:
                 y.append(pad_coord[-1][1])
                 z.append(self.bin_count[id])
 
-        if len(z) > 0:
+        if len(z) > 0 and plot_energy:
             ax.scatter(x,y,c=z,cmap='viridis',s=10)
         ax.set_aspect('equal')
         ax.autoscale()
         if show:
             plt.show()
         return ax
-
 
     def orthocenter(self,x1, y1, x2, y2, x3, y3):
         # Function to find the equation of a line given two points
@@ -299,7 +298,7 @@ class Trajectory():
     def set_name(self,name):
         self.traj_name = name
 
-    def traj_plots(self,SS_to_plot : List[Trajectory_SS_Type],show=True,save=False,output_path=None):
+    def traj_plots(self,SS_to_plot : List[Trajectory_SS_Type],show=True,plot_energy_on_pad = False):
         space_state_vector_list = []
         space_state_vector_list_velo = []
         energy_list = []
@@ -336,7 +335,7 @@ class Trajectory():
         ax.set_title('3D Trajectory')
 
         fig = plt.figure()
-        ax_pad = self.pad.draw_pads(show=False)
+        ax_pad = self.pad.draw_pads(show=False, plot_energy = plot_energy_on_pad)
         ax_no_pad = fig.add_subplot(111)
         for i,space_state_vector in enumerate(space_state_vector_list):
             ax_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
@@ -369,16 +368,15 @@ class Trajectory():
             plt.show()
 
 class Traj_Generator():
-    def __init__(self,max_traj_length = 1000) -> None:
+    def __init__(self,max_traj_length = simulation_config.max_traj_length) -> None:
         self.max_traj_length = max_traj_length
         self.real_traj = torch.zeros((6,self.max_traj_length ,1))
         self.obs_traj = torch.zeros((6,self.max_traj_length ,1))
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
-        self.delta_t = 0.05 #step size in nseconds (0.5 cm)
+        self.delta_t = simulation_config.delta_t #step size in nseconds
         self.ATTPC_pad = AtTpcMap()
         self.ATTPC_pad.GeneratePadPlane()
-
 
     def gaussian_2d(self,mu, sigma):
         """
@@ -422,7 +420,6 @@ class Traj_Generator():
             self.real_traj[SS_VARIABLE.Vz.value,0,:] = v * np.cos(theta)
         self.obs_traj[:,0,:] =  self.real_traj[:,0,:]
 
-
     def generate(self,energy=None,theta=None,phi = 0,init_x = 0,init_y = 0,init_z = 0,init_vx=None,init_vy=None,init_vz=None):
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
                              init_y=init_y,init_z=init_z,init_vx=init_vx,
@@ -449,10 +446,12 @@ class Traj_Generator():
                                                                       self.real_traj[SS_VARIABLE.Vy.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vz.value,i])
             energy_loss = self.energy[i] - self.energy[i-1]
-            X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(0.2,0.2))
+            X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
             self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
 
-            distance_between_real_and_observed = torch.sqrt(torch.sum((self.obs_traj[:3,i]-self.real_traj[:3,i])**2))
+            distance_between_real_and_observed = torch.sqrt(torch.sum((self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i]
+                                                                        - 
+                                                                       self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i])**2))
             #If the physical distance is too large, it means the particle went off the pad plane
             if distance_between_real_and_observed >= 1:
                 off_pad_plane = True
@@ -465,6 +464,7 @@ class Traj_Generator():
             "obs_traj" : self.obs_traj[:,:i-1],
             "energy" : self.energy[:i-1],
         }
+
         traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
         traj.off_pad_plane = off_pad_plane #for debug purposes
         traj.pad = self.ATTPC_pad #for debug purposes
@@ -479,7 +479,7 @@ def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
         gaussian_noise = mean + torch.sqrt(torch.tensor(variance)) * gaussian_noise_normal
         traj.y += gaussian_noise
     return traj_list
-    
+
 def get_energy_from_brho(brho):
     '''
     Input : 
@@ -505,8 +505,6 @@ def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
     plt.legend()
     plt.show()
 
-
-
 def get_mx_0(traj_coordinates,forced_phi=None):
     mx_0 = torch.zeros(6) #Size of state vector is 6x1
     x = traj_coordinates[SS_VARIABLE.X.value,:]
@@ -521,7 +519,6 @@ def get_mx_0(traj_coordinates,forced_phi=None):
     init_radius = model.params[2] * CM__TO__M
     # plot_circle_with_fit(x_center * CM__TO__M,y_center * CM__TO__M,init_radius,x * CM__TO__M,y* CM__TO__M)
 
-
     y_from_center = y - y_center
     x_from_center = x - x_center
 
@@ -533,12 +530,9 @@ def get_mx_0(traj_coordinates,forced_phi=None):
     ransacc.fit(arc_lengths.reshape(-1,1), z.numpy() * CM__TO__M)
     vector = torch.tensor([1,ransacc.estimator_.intercept_ + ransacc.estimator_.coef_[0]])
     vector /= torch.norm(vector,p=2)
-    
 
     ## Init Angles ##
     init_theta = torch.arccos(vector[1])
-
-
 
     ### Init Energy ###
     brho = init_radius * B / np.sin(init_theta)
@@ -560,8 +554,6 @@ def get_mx_0(traj_coordinates,forced_phi=None):
     mx_0[SS_VARIABLE.Vy.value] = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * np.sin(init_phi)
     mx_0[SS_VARIABLE.Vz.value] = convert_momentum_to_velocity(init_p) * np.cos(init_theta)
     return mx_0,estimated_parameters
-
-
 
 def convert_momentum_to_velocity(p):
     '''
@@ -775,7 +767,6 @@ def add_angular_straggling(x,y,z,energy,dist_traveled):
 
     return new_x,new_y,new_z
 
-
 def get_deacceleration(energy_interp,add_energy_straggling,delta_pos):
     '''
     Input : 
@@ -794,7 +785,7 @@ def get_deacceleration(energy_interp,add_energy_straggling,delta_pos):
     interp_stopping_acc = interp_stopping_force / MASS_PROTON_KG
     return interp_stopping_acc.float()
 
-def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "TPC_Reconstruction/Simulations/Particle_Tracking/data"):
+def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
     assert (N_Train+N_Test+N_CV)<=2000, "Maximum of 2k Trajectories can be made"
     time_stamp = datetime.now().strftime("_%d_%m_%y__%H_%M")
     dataset_name = dataset_name + time_stamp
@@ -884,7 +875,6 @@ def setup_table_formats(input_file):
     df[6] = df.apply(lambda row: convert_to_cm(row[6], row[7]), axis=1)
     df[8] = df.apply(lambda row: convert_to_cm(row[8], row[9]), axis=1)
 
-
     #sum power loss
     df[2] = df[2].apply(convert_to_float)
     df[3] = df[3].apply(convert_to_float)
@@ -895,7 +885,6 @@ def setup_table_formats(input_file):
     # Write the modified DataFrame to a new text file without units
     headers = ['Energy [MeV]','dE/dx','Range [cm]','Longitudinal Straggling [cm]','Lateral Straggling [cm]']
     df.to_csv(os.path.join("Tools","stpHydrogen_new.txt"), sep=' ', index=False, header=headers)
-
 
 def test():
     #Check that f works like the same with 1 and N batches
@@ -912,12 +901,29 @@ def test():
             print("ERROR")
     
 if __name__ == "__main__":
-    # generate_dataset(N_Train=10,N_CV=0,N_Test=0,dataset_name="dataset")
-    gen = Traj_Generator()
-    traj,_ = gen.generate(energy=2,theta=1.9,phi=1.46)
-    traj.traj_plots([Trajectory_SS_Type.Real])
-    # df = pd.DataFrame(traj.y.squeeze(-1).numpy().T,columns = ['x','y','z','vx','vy','vz'])
-    # df.to_csv('debug_traj_energy_2_teta_1_phi_0.csv', index=False)
+    if simulation_config.mode == "generate_dataset":
+        generate_dataset(N_Train=simulation_config.num_train_traj,
+                         N_CV=simulation_config.num_val_traj,
+                         N_Test=simulation_config.num_test_traj,
+                         dataset_name=simulation_config.dataset_name,
+                         output_dir=simulation_config.output_dir)
+    
+    if simulation_config.mode == "generate_traj":
+        gen = Traj_Generator()
+        traj,_ = gen.generate(energy=simulation_config.energy,
+                              theta=simulation_config.theta,
+                              phi=simulation_config.phi)
+
+        traj_to_plot = []
+        if simulation_config.plot_real_traj:
+            traj_to_plot.append(Trajectory_SS_Type.Real)
+        if simulation_config.plot_observed_traj:
+            traj_to_plot.append(Trajectory_SS_Type.Observed)
+
+        if simulation_config.plot_traj:
+            traj.traj_plots(traj_to_plot,plot_energy_on_pad=simulation_config.plot_energy_on_pad)
+        # df = pd.DataFrame(traj.y.squeeze(-1).numpy().T,columns = ['x','y','z','vx','vy','vz'])
+        # df.to_csv('debug_traj_energy_2_teta_1_phi_0.csv', index=False)
 
 
 

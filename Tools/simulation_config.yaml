@@ -1,0 +1,41 @@
+max_traj_length : 1000
+stopping_power_table_path : "Tools/stpHydrogen_new.txt"
+delta_t : 0.05
+charge_std_x_axis : 0.2 # STD of charge spread in the x axis
+charge_std_y_axis : 0.2 # STD of charge spread in the x axis
+
+#Config Parameters for Chamber
+magnetic_field : 2.85
+electric_field : 500
+
+##Config Parameters for Pad
+small_z_spacing : 0.00508 # 2 * 2.54 / 1000
+small_tri_side : 0.46736 # 184. * 2.54 / 1000
+umega_radius : 27.50000088 # 10826.772 * 2.54 /1000
+
+
+
+#######################
+### Simulation Modes ###
+#######################
+
+mode: "generate_traj" # "generate_dataset" - generate a whole dataset // "generate_traj" - generate 1 trajectory
+
+##Config Parameters for "generate_dataset"
+num_train_traj : 150
+num_val_traj: 25
+num_test_traj : 25
+dataset_name : "dataset"
+output_dir : "TPC_Reconstruction/Simulations/Particle_Tracking/data" # where to save results
+angle_energy_table_path : "Tools/Angle_Energy_Full.txt"
+
+##Config Parameters for "generate_traj"
+energy : 2 #MeV
+theta : 1 #rad
+phi : 1 #rad
+plot_traj: true #Flag if to plot trajectories, plots chosen trajectory one on top of the other. If this is false, disables the rests
+plot_real_traj : true # flag if to plot the real trajectory
+plot_observed_traj : true # flag if to plot observed trajectory
+plot_energy_on_pad : true # flag if to plot energy on pad
+
+
