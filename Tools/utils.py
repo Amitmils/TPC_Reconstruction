@@ -71,7 +71,7 @@ C = 3*1e8
 #Setup Chamber parameters
 B = simulation_config.magnetic_field #Applied Magnetic Field (T)
 E = torch.cos((Q_PROTON*B)/MASS_PROTON_KG) * simulation_config.electric_field #Applied Electric Field (V/m)
-GAS_MEDIUM_DENSITY = 3.3e-5 * 1000 #mg/cm3 at 1 bar
+GAS_MEDIUM_DENSITY = simulation_config.gas_density #mg/cm3 at 1 bar
 
 # Conversion macros
 CM_NS__TO__M_S = 1e7
@@ -114,7 +114,7 @@ class AtTpcMap:
         mid_points_of_pad = self.AtPadCoord[:,-1,:]
 
         distances = np.abs(x - mid_points_of_pad[:,0]) + np.abs(y - mid_points_of_pad[:,1])
-        relevant_pads = (distances < 1).nonzero()[0]
+        relevant_pads = (distances <= 1).nonzero()[0] #relevant pads are defined to be those of a distant of at most 1cm
 
         distances = np.abs(X[..., np.newaxis]  - mid_points_of_pad[relevant_pads,0]) + np.abs(Y[..., np.newaxis] - mid_points_of_pad[relevant_pads,1])
         closest_index = relevant_pads[np.argmin(distances, axis=2)]

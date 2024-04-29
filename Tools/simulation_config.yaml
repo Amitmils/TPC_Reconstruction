@@ -5,8 +5,9 @@ charge_std_x_axis : 0.2 # STD of charge spread in the x axis
 charge_std_y_axis : 0.2 # STD of charge spread in the x axis
 
 #Config Parameters for Chamber
-magnetic_field : 2.85
-electric_field : 500
+magnetic_field : 2.85 #T
+electric_field : 500 #V/m
+gas_density : 0.033 #mg/cm3 at 1 bar
 
 ##Config Parameters for Pad
 small_z_spacing : 0.00508 # 2 * 2.54 / 1000
@@ -15,9 +16,9 @@ umega_radius : 27.50000088 # 10826.772 * 2.54 /1000
 
 
 
-#######################
+########################
 ### Simulation Modes ###
-#######################
+########################
 
 mode: "generate_traj" # "generate_dataset" - generate a whole dataset // "generate_traj" - generate 1 trajectory
 
