@@ -35,7 +35,7 @@ theta : 1 #rad
 phi : 1 #rad
 plot_traj: true #Flag if to plot trajectories, plots chosen trajectory one on top of the other. If this is false, disables the rests
 plot_real_traj : true # flag if to plot the real trajectory
-plot_observed_traj : true # flag if to plot observed trajectory
+plot_observed_traj : false # flag if to plot observed trajectory
 plot_energy_on_pad : true # flag if to plot energy on pad
 
 
