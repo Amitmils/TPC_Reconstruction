@@ -429,7 +429,6 @@ class Traj_Generator():
         i=1
         off_pad_plane = False
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
-            print(i)
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
             # real_state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
             # obs_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=True,add_sensor_granularity=True,sensor_pads=self.ATTPC_pad)
