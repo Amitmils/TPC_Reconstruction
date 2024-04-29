@@ -103,18 +103,27 @@ class AtTpcMap:
         self.AtPadCoord[index][2][0] = x + side
         self.AtPadCoord[index][2][1] = y
         # Center 
-        self.AtPadCoord[index][3][0] = self.AtPadCoord[index][1][0]
-        self.AtPadCoord[index][3][1] = self.AtPadCoord[index][1][1]/2
+        self.AtPadCoord[index][3][0],self.AtPadCoord[index][3][1] = self.orthocenter(self.AtPadCoord[index][0][0],self.AtPadCoord[index][0][1],
+                                                                                     self.AtPadCoord[index][1][0],self.AtPadCoord[index][1][1],
+                                                                                     self.AtPadCoord[index][2][0],self.AtPadCoord[index][2][1])
 
     def find_associated_pad(self,x,y):
-        particle_xy_pos = np.array([x.item(),y.item()])
+        input_torch = False
+        if torch.is_tensor(x):
+            input_torch = True
+            x = x.item()
+            y = y.item()
+        particle_xy_pos = np.array([x,y])
         mid_points_of_pad = self.AtPadCoord[:,-1,:]
         distances_from_pads = np.sum(np.abs(mid_points_of_pad - particle_xy_pos),axis=1)
         closest_pad_id = np.argmin(distances_from_pads)
         new_particle_xy_pos = mid_points_of_pad[closest_pad_id,:]
         new_x = torch.tensor(new_particle_xy_pos[0])
         new_y = torch.tensor(new_particle_xy_pos[1])
-        return new_x , new_y
+
+        if input_torch:
+            return torch.tensor([new_x , new_y]).reshape(2,1)
+        return new_x,new_y
 
     def GeneratePadPlane(self):
 
@@ -196,14 +205,13 @@ class AtTpcMap:
                     tmp_pad_x_off = pad_x_off + dotted_s_tri_side
                     self.fill_coord(pad_index, tmp_pad_x_off, pad_y_off, small_tri_side, ort)
                     pad_index += 1
-
         #mirror
         for i in range(pad_index):
             for j in range(4):
                 self.AtPadCoord[i + pad_index][j][0] = self.AtPadCoord[i][j][0]
                 self.AtPadCoord[i + pad_index][j][1] = -self.AtPadCoord[i][j][1]
 
-    def draw_pads(self):
+    def draw_pads(self,show=False):
         fig, ax = plt.subplots()
 
         for pad_coord in self.AtPadCoord:
@@ -213,7 +221,34 @@ class AtTpcMap:
 
         ax.set_aspect('equal')
         ax.autoscale()
-        plt.show()
+        if show:
+            plt.show()
+        return ax
+
+
+    def orthocenter(self,x1, y1, x2, y2, x3, y3):
+        # Function to find the equation of a line given two points
+        def line_equation(point1, point2):
+            x1, y1 = point1
+            x2, y2 = point2
+            slope = (y2 - y1) / (x2 - x1)
+            intercept = y1 - slope * x1
+            return slope, intercept
+
+        # Calculate the equations of lines passing through each vertex and perpendicular to the opposite side
+        slope_AB, intercept_AB = line_equation((x1, y1), (x3 + (x2-x3)/2, y3 + (y2-y3)/2))
+        slope_BC, intercept_BC = line_equation((x3, y3), (x1 + (x2-x1)/2, y1 + (y2-y1)/2))
+
+        # Function to find the intersection point of two lines
+        def intersection_point(slope1, intercept1, slope2, intercept2):
+            x = (intercept2 - intercept1) / (slope1 - slope2)
+            y = slope1 * x + intercept1
+            return x, y
+        
+        # The common intersection point is the orthocenter
+        orthocenter = intersection_point(slope_AB, intercept_AB, slope_BC, intercept_BC)
+
+        return orthocenter
 
 class Trajectory():
     def __init__(self,traj_data,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,init_energy=None,init_teta=None,init_phi=None,delta_t=None) -> None:
@@ -275,13 +310,21 @@ class Trajectory():
         ax.set_title('3D Trajectory')
 
         fig = plt.figure()
-        ax = fig.add_subplot(111)
+        pad = AtTpcMap()
+        pad.GeneratePadPlane()
+        ax_pad = pad.draw_pads(show=False)
+        ax_no_pad = fig.add_subplot(111)
         for i,space_state_vector in enumerate(space_state_vector_list):
-            ax.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
-        ax.legend()
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_title('2D Trajectory')
+            ax_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
+            ax_no_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
+        ax_pad.legend()
+        ax_pad.set_xlabel('X')
+        ax_pad.set_ylabel('Y')
+        ax_pad.set_title('2D Trajectory on Pad')
+        ax_no_pad.legend()
+        ax_no_pad.set_xlabel('X')
+        ax_no_pad.set_ylabel('Y')
+        ax_no_pad.set_title('2D Trajectory')
 
         fig, axs = plt.subplots(2)  # 2 rows of subplots
         for i,space_state_vector in enumerate(space_state_vector_list_velo):
@@ -308,7 +351,7 @@ class Traj_Generator():
         self.obs_traj = torch.zeros((6,self.max_traj_length ,1))
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
-        self.delta_t = 0.05 #step size in nseconds (0.5 cm)
+        self.delta_t = 0.01 #step size in nseconds (0.5 cm)
         self.ATTPC_pad = AtTpcMap()
         self.ATTPC_pad.GeneratePadPlane()
 
@@ -338,7 +381,7 @@ class Traj_Generator():
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
                              init_y=init_y,init_z=init_z,init_vx=init_vx,
                              init_vy=init_vy,init_vz=init_vz)
-
+        # assert energy>1 , "Only supports over 1MeV energies! For more update 'Angle_Enger"
         self.energy[0] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,0,:],self.real_traj[SS_VARIABLE.Vy.value,0,:],self.real_traj[SS_VARIABLE.Vz.value,0,:])
         i=1
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
@@ -349,12 +392,22 @@ class Traj_Generator():
             self.real_traj[:,i] = real_state_space_vector_curr
             self.obs_traj[:,i] = obs_state_space_vector_curr
 
+            # curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
+            # self.real_traj[:,i] = self.obs_traj[:,i] = curr_space_state_vector
+            # self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
+            
+
+
+
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vy.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vz.value,i])
-            distance_from_z_axis = torch.sqrt(self.real_traj[SS_VARIABLE.Vx.value,i]**2 + self.real_traj[SS_VARIABLE.Y.value,i]**2)
-            if distance_from_z_axis >= CHAMBER_RADIUS and i>2:
+            distance_between_real_and_observed = torch.sqrt(torch.sum((self.obs_traj[:3,i]-self.real_traj[:3,i])**2))
+            off_pad_plane = False
+            #If the physical distance is too large, it means the particle went off the pad plane
+            if distance_between_real_and_observed >= 1:
+                off_pad_plane = True
                 break
             i+=1
 
@@ -365,8 +418,9 @@ class Traj_Generator():
             "energy" : self.energy[:i-1],
         }
         traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
-        get_mx_0(traj.x_real.squeeze(-1))
-        return traj
+        traj.off_pad_plane = off_pad_plane #for debug purposes
+        _, estimated_para = get_mx_0(traj.y.squeeze(-1))
+        return traj,estimated_para
     
 def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
     for traj in traj_list:
@@ -445,7 +499,8 @@ def get_mx_0(traj_coordinates,forced_phi=None):
     estimated_parameters = {
         "inital_theta" : init_theta,
         "initial_phi" : init_phi,
-        "init_radius" : init_radius
+        "init_radius" : init_radius,
+        "init_energy" : init_energy
     }
 
     mx_0[SS_VARIABLE.X.value] = x[0]
@@ -697,7 +752,7 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
     assert dataset_name not in os.listdir(output_dir), f"Dataset with name '{dataset_name}' Exists!"
 
     ## Get Angle-Energy
-    data = np.loadtxt("TPC_Reconstruction/Tools/Angle_Energy.txt")
+    data = np.loadtxt("Tools/Angle_Energy_Full.txt")
     theta = np.radians(data[:, 0]) 
     energy = data[:, 1]  #MeV
     np.random.shuffle(permutation :=np.arange(1, len(energy)))
@@ -707,10 +762,29 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name = "dataset",output_dir = "
 
     generator = Traj_Generator()
     Dataset = []
+    traj_meta_data = {"ID": [],"energy":[],"est_energy":[],"phi":[],"est_phi":[],"theta":[],"est_theta":[],'set':[]}
     for i in range(N_Train + N_CV + N_Test):
-        print(f"Generating trajectory {i}; Energy - {energy[i]},Theta - {theta[i]},Phi - {phi[i]}")
-        Dataset.append(generator.generate(energy=energy[i],theta=theta[i],phi=phi[i]))
+        print(f"Generating trajectory {i}; Energy : {energy[i]},Theta : {theta[i]},Phi : {phi[i]}")
+        traj,traj_estimated_parameters = generator.generate(energy=energy[i],theta=theta[i],phi=phi[i])
+        traj.ID = i
+        Dataset.append(traj)
+        traj_meta_data['ID'].append(i)
+        traj_meta_data['energy'].append(energy[i])
+        traj_meta_data['est_energy'].append(traj_estimated_parameters['init_energy'].item())
+        traj_meta_data['phi'].append(phi[i])
+        traj_meta_data['est_phi'].append(traj_estimated_parameters['initial_phi'].item())
+        traj_meta_data['theta'].append(theta[i])
+        traj_meta_data['est_theta'].append(traj_estimated_parameters['inital_theta'].item())
+        if i<N_Train:
+            traj_meta_data['set'].append('train')
+        elif i < N_CV:
+            traj_meta_data['set'].append('validation')
+        else:
+            traj_meta_data['set'].append('test')
 
+    traj_meta_data_df = pd.DataFrame(traj_meta_data)
+    traj_meta_data_df.set_index('ID', inplace=True)
+    traj_meta_data_df.to_csv(os.path.join(output_dir,f'{dataset_name}_traj_metadata.csv'))
 
     training_set = Dataset[:N_Train]
     Dataset = Dataset[N_Train:]
@@ -788,12 +862,12 @@ def test():
             print("ERROR")
     
 if __name__ == "__main__":
-    # generate_dataset(N_Train=150,N_CV=25,N_Test=25,dataset_name="No_Deaccel")
+    # generate_dataset(N_Train=10,N_CV=0,N_Test=0,dataset_name="dataset")
     gen = Traj_Generator()
-    traj = gen.generate(energy=2,theta=1,phi=1.46)
+    traj,_ = gen.generate(energy=2,theta=1.9,phi=1.46)
     traj.traj_plots([Trajectory_SS_Type.Real,Trajectory_SS_Type.Observed])
-    df = pd.DataFrame(traj.y.squeeze(-1).numpy().T,columns = ['x','y','z','vx','vy','vz'])
-    df.to_csv('debug_traj_energy_2_teta_1_phi_0.csv', index=False)
+    # df = pd.DataFrame(traj.y.squeeze(-1).numpy().T,columns = ['x','y','z','vx','vy','vz'])
+    # df.to_csv('debug_traj_energy_2_teta_1_phi_0.csv', index=False)
 
 
 
