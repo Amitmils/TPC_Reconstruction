@@ -14,6 +14,7 @@ from skimage.measure import CircleModel,LineModelND, ransac
 from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
+import time
 
 
 #  https://skisickness.com/2010/04/relativistic-kinematics-calculator/
@@ -91,6 +92,7 @@ class AtTpcMap:
         self.kIsParsed = False
         self.fNumberPads = 10240
         self.AtPadCoord = np.zeros((self.fNumberPads, 4, 2), dtype=np.float32)
+        self.bin_count = np.zeros(self.fNumberPads)
 
     def fill_coord(self, index, x, y, side, ort):
         # Left
@@ -106,6 +108,19 @@ class AtTpcMap:
         self.AtPadCoord[index][3][0],self.AtPadCoord[index][3][1] = self.orthocenter(self.AtPadCoord[index][0][0],self.AtPadCoord[index][0][1],
                                                                                      self.AtPadCoord[index][1][0],self.AtPadCoord[index][1][1],
                                                                                      self.AtPadCoord[index][2][0],self.AtPadCoord[index][2][1])
+    def add_to_bin_count(self,X,Y,Z,energy_loss,x,y):
+        # Flatten the meshgrid matrix
+        mid_points_of_pad = self.AtPadCoord[:,-1,:]
+
+        distances = np.abs(x - mid_points_of_pad[:,0]) + np.abs(y - mid_points_of_pad[:,1])
+        relevant_pads = (distances < 1).nonzero()[0]
+
+        distances = np.abs(X[..., np.newaxis]  - mid_points_of_pad[relevant_pads,0]) + np.abs(Y[..., np.newaxis] - mid_points_of_pad[relevant_pads,1])
+        closest_index = relevant_pads[np.argmin(distances, axis=2)]
+        aa = np.unique(closest_index)
+        for id in aa :
+            self.bin_count[id] += np.sum(-1 * energy_loss * Z[closest_index == id])
+
 
     def find_associated_pad(self,x,y):
         input_torch = False
@@ -211,14 +226,25 @@ class AtTpcMap:
                 self.AtPadCoord[i + pad_index][j][0] = self.AtPadCoord[i][j][0]
                 self.AtPadCoord[i + pad_index][j][1] = -self.AtPadCoord[i][j][1]
 
-    def draw_pads(self,show=False):
+    def draw_pads(self,show=True):
         fig, ax = plt.subplots()
 
-        for pad_coord in self.AtPadCoord:
+        x = []
+        y = []
+        z = []
+        for id,pad_coord in enumerate(self.AtPadCoord):
             pad_coords = [(x, y) for x, y in pad_coord[:3]]
             pad = Polygon(pad_coords, edgecolor='black', facecolor='none')
             ax.add_patch(pad)
+            if self.bin_count[id] > 0:
+                if self.bin_count[id]/max(self.bin_count) < 0.1:
+                    continue
+                x.append(pad_coord[-1][0])
+                y.append(pad_coord[-1][1])
+                z.append(self.bin_count[id])
 
+        if len(z) > 0:
+            ax.scatter(x,y,c=z,cmap='viridis',s=10)
         ax.set_aspect('equal')
         ax.autoscale()
         if show:
@@ -310,9 +336,7 @@ class Trajectory():
         ax.set_title('3D Trajectory')
 
         fig = plt.figure()
-        pad = AtTpcMap()
-        pad.GeneratePadPlane()
-        ax_pad = pad.draw_pads(show=False)
+        ax_pad = self.pad.draw_pads(show=False)
         ax_no_pad = fig.add_subplot(111)
         for i,space_state_vector in enumerate(space_state_vector_list):
             ax_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
@@ -351,11 +375,32 @@ class Traj_Generator():
         self.obs_traj = torch.zeros((6,self.max_traj_length ,1))
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
-        self.delta_t = 0.01 #step size in nseconds (0.5 cm)
+        self.delta_t = 0.05 #step size in nseconds (0.5 cm)
         self.ATTPC_pad = AtTpcMap()
         self.ATTPC_pad.GeneratePadPlane()
 
 
+    def gaussian_2d(self,mu, sigma):
+        """
+        DESCRIPTION:
+            Calculate the value of 2D Gaussian distribution at point (x, y).
+        INPUT:
+            x (float): x-coordinate of the point.
+            y (float): y-coordinate of the point.
+            mu (tuple): Mean of the distribution in the form of (mean_x, mean_y).
+            sigma (tuple): Standard deviation of the distribution in the form of (std_dev_x, std_dev_y).
+        OUTPUT:
+            float: Value of the 2D Gaussian distribution at point (x, y).
+        """
+
+        mean_x, mean_y = mu
+        std_dev_x, std_dev_y = sigma
+        x = np.linspace(mean_x-1, mean_x+1, 100)
+        y = np.linspace(mean_y-1, mean_y+2, 100)
+        X, Y = np.meshgrid(x, y)
+        Z = (1 / (2 * np.pi * std_dev_x * std_dev_y) * 
+                np.exp(-((X - mean_x)**2 / (2 * std_dev_x**2) + (Y - mean_y)**2 / (2 * std_dev_y**2))))
+        return X,Y,Z
     def set_init_values(self,energy=None,theta=None,init_vx=None,init_vy=None,init_vz=None,phi=0,init_x=0,init_y=0,init_z=0):
         self.init_energy = energy
         self.init_teta = theta
@@ -377,34 +422,37 @@ class Traj_Generator():
             self.real_traj[SS_VARIABLE.Vz.value,0,:] = v * np.cos(theta)
         self.obs_traj[:,0,:] =  self.real_traj[:,0,:]
 
+
     def generate(self,energy=None,theta=None,phi = 0,init_x = 0,init_y = 0,init_z = 0,init_vx=None,init_vy=None,init_vz=None):
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
                              init_y=init_y,init_z=init_z,init_vx=init_vx,
                              init_vy=init_vy,init_vz=init_vz)
-        # assert energy>1 , "Only supports over 1MeV energies! For more update 'Angle_Enger"
+
         self.energy[0] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,0,:],self.real_traj[SS_VARIABLE.Vy.value,0,:],self.real_traj[SS_VARIABLE.Vz.value,0,:])
         i=1
+        off_pad_plane = False
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
-
+            print(i)
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
-            real_state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
-            obs_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=True,add_sensor_granularity=True,sensor_pads=self.ATTPC_pad)
-            self.real_traj[:,i] = real_state_space_vector_curr
-            self.obs_traj[:,i] = obs_state_space_vector_curr
+            # real_state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
+            # obs_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=True,add_sensor_granularity=True,sensor_pads=self.ATTPC_pad)
+            # self.real_traj[:,i] = real_state_space_vector_curr
+            # self.obs_traj[:,i] = obs_state_space_vector_curr
 
-            # curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
-            # self.real_traj[:,i] = self.obs_traj[:,i] = curr_space_state_vector
-            # self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
-            
-
+            curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
+            self.real_traj[:,i] = self.obs_traj[:,i] = curr_space_state_vector
+            self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
 
 
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vy.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vz.value,i])
+            energy_loss = self.energy[i] - self.energy[i-1]
+            X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(0.2,0.2))
+            self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
+
             distance_between_real_and_observed = torch.sqrt(torch.sum((self.obs_traj[:3,i]-self.real_traj[:3,i])**2))
-            off_pad_plane = False
             #If the physical distance is too large, it means the particle went off the pad plane
             if distance_between_real_and_observed >= 1:
                 off_pad_plane = True
@@ -419,6 +467,8 @@ class Traj_Generator():
         }
         traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
         traj.off_pad_plane = off_pad_plane #for debug purposes
+        traj.pad = self.ATTPC_pad #for debug purposes
+
         _, estimated_para = get_mx_0(traj.y.squeeze(-1))
         return traj,estimated_para
     
@@ -865,7 +915,7 @@ if __name__ == "__main__":
     # generate_dataset(N_Train=10,N_CV=0,N_Test=0,dataset_name="dataset")
     gen = Traj_Generator()
     traj,_ = gen.generate(energy=2,theta=1.9,phi=1.46)
-    traj.traj_plots([Trajectory_SS_Type.Real,Trajectory_SS_Type.Observed])
+    traj.traj_plots([Trajectory_SS_Type.Real])
     # df = pd.DataFrame(traj.y.squeeze(-1).numpy().T,columns = ['x','y','z','vx','vy','vz'])
     # df.to_csv('debug_traj_energy_2_teta_1_phi_0.csv', index=False)
 
