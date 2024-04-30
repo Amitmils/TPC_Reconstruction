@@ -1,8 +1,8 @@
 max_traj_length : 1000
 stopping_power_table_path : "Tools/stpHydrogen_new.txt"
-delta_t : 0.05
-charge_std_x_axis : 0.2 # STD of charge spread in the x axis
-charge_std_y_axis : 0.2 # STD of charge spread in the x axis
+delta_t : 0.01
+charge_std_x_axis : 0.2 # STD of diffusion in the x axis
+charge_std_y_axis : 0.2 # STD of diffusion in the y axis
 
 #Config Parameters for Chamber
 magnetic_field : 2.85 #T
@@ -36,7 +36,7 @@ theta : 1 #rad
 phi : 1 #rad
 plot_traj: true #Flag if to plot trajectories, plots chosen trajectory one on top of the other. If this is false, disables the rests
 plot_real_traj : true # flag if to plot the real trajectory
-plot_observed_traj : false # flag if to plot observed trajectory
-plot_energy_on_pad : true # flag if to plot energy on pad
+plot_observed_traj : true # flag if to plot observed trajectory
+plot_energy_on_pad : false # flag if to plot energy on pad
 
 

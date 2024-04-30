@@ -71,7 +71,7 @@ C = 3*1e8
 #Setup Chamber parameters
 B = simulation_config.magnetic_field #Applied Magnetic Field (T)
 E = torch.cos((Q_PROTON*B)/MASS_PROTON_KG) * simulation_config.electric_field #Applied Electric Field (V/m)
-GAS_MEDIUM_DENSITY = simulation_config.gas_density #mg/cm3 at 1 bar
+GAS_MEDIUM_DENSITY = 3.3e-5 * 1000 #mg/cm3 at 1 bar
 
 # Conversion macros
 CM_NS__TO__M_S = 1e7
@@ -114,7 +114,7 @@ class AtTpcMap:
         mid_points_of_pad = self.AtPadCoord[:,-1,:]
 
         distances = np.abs(x - mid_points_of_pad[:,0]) + np.abs(y - mid_points_of_pad[:,1])
-        relevant_pads = (distances <= 1).nonzero()[0] #relevant pads are defined to be those of a distant of at most 1cm
+        relevant_pads = (distances < 1).nonzero()[0]
 
         distances = np.abs(X[..., np.newaxis]  - mid_points_of_pad[relevant_pads,0]) + np.abs(Y[..., np.newaxis] - mid_points_of_pad[relevant_pads,1])
         closest_index = relevant_pads[np.argmin(distances, axis=2)]
@@ -349,21 +349,22 @@ class Trajectory():
         ax_no_pad.set_ylabel('Y')
         ax_no_pad.set_title('2D Trajectory')
 
-        fig, axs = plt.subplots(2)  # 2 rows of subplots
-        for i,space_state_vector in enumerate(space_state_vector_list_velo):
-            axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
-            axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
-            axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
-        axs[0].set_title("Velocities Over Time")
-        axs[0].set_ylabel(f"Velocity [m/s]")
-        axs[0].set_xticks([])
-        axs[0].legend()
-        for i,energy in enumerate(energy_list):
-            axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
-        axs[1].set_title('Kinetic Energy Over Time')
-        axs[1].set_xlabel('Time [s]')
-        axs[1].set_ylabel('Energy [MeV]')
-        axs[1].legend()
+        if len(space_state_vector_list_velo):
+            fig, axs = plt.subplots(2)  # 2 rows of subplots
+            for i,space_state_vector in enumerate(space_state_vector_list_velo):
+                axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
+                axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
+                axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
+            axs[0].set_title("Velocities Over Time")
+            axs[0].set_ylabel(f"Velocity [m/s]")
+            axs[0].set_xticks([])
+            axs[0].legend()
+            for i,energy in enumerate(energy_list):
+                axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
+            axs[1].set_title('Kinetic Energy Over Time')
+            axs[1].set_xlabel('Time [s]')
+            axs[1].set_ylabel('Energy [MeV]')
+            axs[1].legend()
         if show:
             plt.show()
 
@@ -758,10 +759,11 @@ def add_angular_straggling(x,y,z,energy,dist_traveled):
     theta = torch.arccos(z/radius)
 
     new_theta = theta + angular_straggling
+    new_phi = phi + angular_straggling
 
     #Convert back to cartesian coordinates
-    new_x = radius * torch.sin(new_theta) * torch.cos(phi)
-    new_y = radius * torch.sin(new_theta) * torch.sin(phi)
+    new_x = radius * torch.sin(new_theta) * torch.cos(new_phi)
+    new_y = radius * torch.sin(new_theta) * torch.sin(new_phi)
     new_z = radius * torch.cos(new_theta)
 
     return new_x,new_y,new_z
@@ -919,7 +921,7 @@ if __name__ == "__main__":
         if simulation_config.plot_observed_traj:
             traj_to_plot.append(Trajectory_SS_Type.Observed)
 
-        if simulation_config.plot_traj:
+        if simulation_config.plot_traj and len(traj_to_plot):
             traj.traj_plots(traj_to_plot,plot_energy_on_pad=simulation_config.plot_energy_on_pad)
         # df = pd.DataFrame(traj.y.squeeze(-1).numpy().T,columns = ['x','y','z','vx','vy','vz'])
         # df.to_csv('debug_traj_energy_2_teta_1_phi_0.csv', index=False)
