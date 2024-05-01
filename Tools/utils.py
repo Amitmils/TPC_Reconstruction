@@ -119,8 +119,16 @@ class AtTpcMap:
         distances = np.abs(X[..., np.newaxis]  - mid_points_of_pad[relevant_pads,0]) + np.abs(Y[..., np.newaxis] - mid_points_of_pad[relevant_pads,1])
         closest_index = relevant_pads[np.argmin(distances, axis=2)]
         aa = np.unique(closest_index)
+        temp_count = np.zeros_like(self.bin_count)
         for id in aa :
-            self.bin_count[id] += np.sum(-1 * energy_loss * Z[closest_index == id])
+            energy_t_add_to_bin = np.sum(-1 * energy_loss * Z[closest_index == id])
+            self.bin_count[id] += energy_t_add_to_bin
+            temp_count[id] +=  energy_t_add_to_bin
+        pos_weights = temp_count/ np.sum(temp_count)
+        center_of_pads = self.AtPadCoord[:,3,:]
+        obs_x_y_pos = np.sum(center_of_pads * pos_weights.reshape(-1,1),axis=0)
+        return torch.tensor(obs_x_y_pos).reshape(-1,1)
+        
 
 
     def find_associated_pad(self,x,y):
@@ -431,24 +439,24 @@ class Traj_Generator():
         off_pad_plane = False
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
-            # real_state_space_vector_curr = f(state_space_vector_prev,self.delta_t)
-            # obs_state_space_vector_curr = f(state_space_vector_prev,self.delta_t,add_straggling=True,add_sensor_granularity=True,sensor_pads=self.ATTPC_pad)
-            # self.real_traj[:,i] = real_state_space_vector_curr
-            # self.obs_traj[:,i] = obs_state_space_vector_curr
 
             curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
-            self.real_traj[:,i] = self.obs_traj[:,i] = curr_space_state_vector
-            self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
-
+            self.real_traj[:,i] = curr_space_state_vector
 
             self.t[i] = i * self.delta_t
             self.energy[i] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vy.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vz.value,i])
             energy_loss = self.energy[i] - self.energy[i-1]
-            X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
-            self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
+            if energy_loss and simulation_config.CoM_observations:
+                X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
+                xx = self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
+                self.obs_traj[:2,i] = xx
+            else:
+                #if energy loss is zero (due to quantization error) - take the closest pad
+                self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
 
+            self.obs_traj[2,i] = self.real_traj[2,i]
             distance_between_real_and_observed = torch.sqrt(torch.sum((self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i]
                                                                         - 
                                                                        self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i])**2))
@@ -637,7 +645,7 @@ def get_vel_deriv(vx,vy,vz,direction,delta_t,add_energy_straggling=False):
     a *= M_S_SQUARED__TO__CM_NS_SQUARED
     return a
 
-def f(state_space_vector_prev,delta_t,add_straggling : bool = False,add_sensor_granularity : bool = False, sensor_pads : AtTpcMap = None):
+def f(state_space_vector_prev,delta_t,add_straggling : bool = False):
     '''
     DESCRIPTION:
         RK4 Propagation
@@ -710,10 +718,6 @@ def f(state_space_vector_prev,delta_t,add_straggling : bool = False,add_sensor_g
 
     if add_straggling: #only used in generation not in KF
         x,y,z = add_angular_straggling(x,y,z,get_energy_from_velocities(vx,vy,vz),RK4_diff_pos)
-
-    if add_sensor_granularity:#only used in generation not in KF
-        assert sensor_pads is not None, "No Sensor Pad Given!"
-        x,y = sensor_pads.find_associated_pad(x,y)
 
     state_space_vector_curr = torch.cat((x.reshape(-1,1),y.reshape(-1,1),z.reshape(-1,1),vx.reshape(-1,1),vy.reshape(-1,1),vz.reshape(-1,1)),dim=1).unsqueeze(-1)
     return state_space_vector_curr
