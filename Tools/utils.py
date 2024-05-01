@@ -448,22 +448,24 @@ class Traj_Generator():
                                                                       self.real_traj[SS_VARIABLE.Vy.value,i],
                                                                       self.real_traj[SS_VARIABLE.Vz.value,i])
             energy_loss = self.energy[i] - self.energy[i-1]
-            if energy_loss and simulation_config.CoM_observations:
-                X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
-                xx = self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
-                self.obs_traj[:2,i] = xx
-            else:
-                #if energy loss is zero (due to quantization error) - take the closest pad
-                self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
 
+
+            # Rough estimate of where XY is on pad
+            self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
             self.obs_traj[2,i] = self.real_traj[2,i]
-            distance_between_real_and_observed = torch.sqrt(torch.sum((self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i]
-                                                                        - 
-                                                                       self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i])**2))
+            distance_between_real_and_observed = torch.sum(torch.abs(self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i]
+                                                            - 
+                                                            self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i]))
             #If the physical distance is too large, it means the particle went off the pad plane
             if distance_between_real_and_observed >= 1:
                 off_pad_plane = True
                 break
+            
+            #Fine tune observation with CoM
+            if simulation_config.CoM_observations and energy_loss:
+                X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
+                xx = self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
+                self.obs_traj[:2,i] = xx
             i+=1
 
         traj_dict = {
