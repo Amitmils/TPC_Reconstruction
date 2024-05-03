@@ -2,10 +2,6 @@
 state_vector_size: 6
 observation_vector_size: 3
 
-#For 'Amit Simulated' data - added noise to observations
-added_noise_mean: 0
-added_noise_var: 0.1
-
 #Data Split
 train_set_size: 150
 CV_set_size: 250
@@ -66,5 +62,5 @@ output_dim_mult_RTSNet: 40
 
 
 #Paths
-path_results: "/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/models"
-Dataset_path: "/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/data/dataset_14_03_24__21_49.pt"
+path_results: "Simulations/Particle_Tracking/models"
+Dataset_path: "TPC_Reconstruction/Simulations/Particle_Tracking/data/CoM_Obs_03_03_05_24__15_46.pt"

@@ -57,13 +57,6 @@ print(f"Data Load : {os.path.basename(system_config.Dataset_path)}")
 system_config.delta_t = train_set[0].delta_t
 system_config.data_source = train_set[0].data_src
 
-if system_config.data_source == Trajectory_Source.Amit_Simulated:
-   train_set = add_noise_to_list_of_trajectories(train_set,mean=system_config.added_noise_mean,variance=system_config.added_noise_var)
-   CV_set = add_noise_to_list_of_trajectories(CV_set,mean=system_config.added_noise_mean,variance=system_config.added_noise_var)
-   test_set = add_noise_to_list_of_trajectories(test_set,mean=system_config.added_noise_mean,variance=system_config.added_noise_var)
-
-
-
 
 #We can set a smaller set in config
 system_config.train_set_size = min(len(train_set),system_config.train_set_size)

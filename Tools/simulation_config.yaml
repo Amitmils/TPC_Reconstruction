@@ -25,18 +25,18 @@ CoM_observations : true #if set to true, observations will be taken from a CoM o
 mode: "generate_traj" # "generate_dataset" - generate a whole dataset // "generate_traj" - generate 1 trajectory
 
 ##Config Parameters for "generate_dataset"
-num_train_traj : 150
+num_train_traj : 250
 num_val_traj: 25
 num_test_traj : 25
-dataset_name : "dataset"
+dataset_name : "CoM_Obs_03"
 output_dir : "TPC_Reconstruction/Simulations/Particle_Tracking/data" # where to save results
 angle_energy_table_path : "Tools/Angle_Energy_Full.txt"
 
 ##Config Parameters for "generate_traj"
-energy : 2 #MeV
-theta : 1 #rad
-phi : 1 #rad
-plot_traj: true #Flag if to plot trajectories, plots chosen trajectory one on top of the other. If this is false, disables the rests
+energy : 40.998605300037 #MeV
+theta : 0.9660258343289447 #rad
+phi : 0.7610657131226479 #rad
+plot_traj: false #Flag if to plot trajectories, plots chosen trajectory one on top of the other. If this is false, disables the rests
 plot_real_traj : true # flag if to plot the real trajectory
 plot_observed_traj : true # flag if to plot observed trajectory
 plot_energy_on_pad : true # flag if to plot energy on pad

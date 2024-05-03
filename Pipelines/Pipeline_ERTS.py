@@ -185,11 +185,11 @@ class Pipeline_ERTS:
 
             M1_0 = []
             for ii in range(len(train_batch)):
-                y_training_batch[ii,:,:traj_lengths_in_train_batch[ii]] = train_batch[ii].y[:,:traj_lengths_in_train_batch[ii]]
-                train_target_batch[ii,:,:traj_lengths_in_train_batch[ii]] = train_batch[ii].x_real[:,:traj_lengths_in_train_batch[ii]]
+                y_training_batch[ii,:,:traj_lengths_in_train_batch[ii]] = train_batch[ii].y[:3,:traj_lengths_in_train_batch[ii]].squeeze(-1)
+                train_target_batch[ii,:,:traj_lengths_in_train_batch[ii]] = train_batch[ii].x_real[:,:traj_lengths_in_train_batch[ii]].squeeze(-1)
                 mask_train[ii,:,:traj_lengths_in_train_batch[ii]] = 1
-                m1_0_real,para_real = get_mx_0(train_batch[ii].x_real)
-                m1_0_noisy,para_noisy = get_mx_0(train_batch[ii].y,forced_phi=para_real['initial_phi'])
+                m1_0_real,para_real = get_mx_0(train_batch[ii].x_real.squeeze(-1))
+                m1_0_noisy,para_noisy = get_mx_0(train_batch[ii].y.squeeze(-1))
                 # print(para_real,m1_0_real)
                 # print(para_noisy,m1_0_noisy)
                 M1_0.append(m1_0_noisy.unsqueeze(0))
@@ -284,11 +284,11 @@ class Pipeline_ERTS:
 
                 M1_0 = []
                 for ii,traj in enumerate(cv_set):
-                    y_CV[ii,:,:traj_lengths_in_CV[ii]]      = traj.y[:,:traj_lengths_in_CV[ii]]
-                    CV_target[ii,:,:traj_lengths_in_CV[ii]] = traj.x_real[:,:traj_lengths_in_CV[ii]]
+                    y_CV[ii,:,:traj_lengths_in_CV[ii]]      = traj.y[:3,:traj_lengths_in_CV[ii]].squeeze(-1)
+                    CV_target[ii,:,:traj_lengths_in_CV[ii]] = traj.x_real[:,:traj_lengths_in_CV[ii]].squeeze(-1)
                     mask_CV[ii,:,:traj_lengths_in_CV[ii]] = 1
-                    m1_0_real,para_real = get_mx_0(cv_set[ii].x_real)
-                    m1_0_noisy,para_noisy= get_mx_0(cv_set[ii].y,forced_phi=para_real['initial_phi'])
+                    m1_0_real,para_real = get_mx_0(cv_set[ii].x_real.squeeze(-1))
+                    m1_0_noisy,para_noisy= get_mx_0(cv_set[ii].y.squeeze(-1))
                     M1_0.append(m1_0_noisy.unsqueeze(0))
 
                 M1_0 = torch.cat(M1_0,dim=0)

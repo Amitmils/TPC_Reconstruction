@@ -10,6 +10,7 @@ from typing import List
 from datetime import datetime
 import json
 import yaml
+import copy
 from skimage.measure import CircleModel,LineModelND, ransac
 from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
@@ -438,6 +439,7 @@ class Traj_Generator():
         i=1
         off_pad_plane = False
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
+            print(i)
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
 
             curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
@@ -548,7 +550,10 @@ def get_mx_0(traj_coordinates,forced_phi=None):
     brho = init_radius * B / np.sin(init_theta)
     init_energy,init_p = get_energy_from_brho(brho)
 
-    init_phi= torch.arctan2(y[1]-y[0],x[1]-x[0]) if forced_phi == None else forced_phi
+    phis_over_time = torch.arctan2(y_from_center[1:]-y_from_center[0],x_from_center[1:]-x_from_center[0])
+    avg_diff_between_phis = torch.median(phis_over_time.diff())
+    init_phi = torch.median((phis_over_time - avg_diff_between_phis * torch.arange(len(phis_over_time)))[:50])
+    # init_phi= torch.arctan2(y[1]-y[0],x[1]-x[0]) if forced_phi == None else forced_phi
 
     estimated_parameters = {
         "inital_theta" : init_theta,
@@ -556,7 +561,6 @@ def get_mx_0(traj_coordinates,forced_phi=None):
         "init_radius" : init_radius,
         "init_energy" : init_energy
     }
-
     mx_0[SS_VARIABLE.X.value] = x[0]
     mx_0[SS_VARIABLE.Y.value] = y[0]
     mx_0[SS_VARIABLE.Z.value] = z[0]
@@ -626,7 +630,7 @@ def get_vel_deriv(vx,vy,vz,direction,delta_t,add_energy_straggling=False):
     temp_vx = vx * CM_NS__TO__M_S
     temp_vy = vy * CM_NS__TO__M_S
     temp_vz = vz * CM_NS__TO__M_S
-    diff_pos = np.sqrt((delta_t*vx)**2 + (delta_t*vy)**2 + (delta_t*vz)**2) #Rough estimate distance traveled with current velocities - needed for energy straggling
+    diff_pos = torch.sqrt((delta_t*vx)**2 + (delta_t*vy)**2 + (delta_t*vz)**2) #Rough estimate distance traveled with current velocities - needed for energy straggling
     deaccel = get_deacceleration(energy,add_energy_straggling,diff_pos)
     Bx = 0
     By = 0
@@ -815,7 +819,7 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
         print(f"Generating trajectory {i}; Energy : {energy[i]},Theta : {theta[i]},Phi : {phi[i]}")
         traj,traj_estimated_parameters = generator.generate(energy=energy[i],theta=theta[i],phi=phi[i])
         traj.ID = i
-        Dataset.append(traj)
+        Dataset.append(copy.deepcopy(traj))
         traj_meta_data['ID'].append(i)
         traj_meta_data['energy'].append(energy[i])
         traj_meta_data['est_energy'].append(traj_estimated_parameters['init_energy'].item())
