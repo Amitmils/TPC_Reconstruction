@@ -36,7 +36,8 @@ if system_config.use_cuda:
    if torch.cuda.is_available():
       device = torch.device('cuda')
       print("Using GPU")
-      torch.set_default_tensor_type(torch.cuda.FloatTensor)
+      torch.set_default_dtype(torch.float32)  # Set default data type
+      torch.set_default_device('cuda')  # Set default device (optional)
    else:
       raise Exception("No GPU found, please set args.use_cuda = False")
 else:

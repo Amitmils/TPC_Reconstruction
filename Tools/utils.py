@@ -17,10 +17,13 @@ from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
 
 
-if torch.cuda.is_available() and False:
+if torch.cuda.is_available():
     device = torch.device('cuda')
     print("Using GPU")
-    torch.set_default_tensor_type(torch.cuda.FloatTensor)
+    torch.set_default_dtype(torch.float32)  # Set default data type
+    torch.set_default_device('cuda')  # Set default device (optional)
+    #Setting default device to 'cuda' causes some problems with the spline functions that try to turn tensors into numpy inside the functions
+    #therefore, as a WA i set this to cpu before those functions. These functions dont need to be backproped through
 else:
     device = torch.device('cpu')
     print("Using CPU")
@@ -89,15 +92,15 @@ CM__TO__M = 0.01
 M_S_SQUARED__TO__CM_NS_SQUARED = 100 * (1e-9)**2
 
 data = np.loadtxt(simulation_config.stopping_power_table_path,skiprows=1, dtype=float)
+data = torch.tensor(data)
+data = data.cpu().numpy()
 energy_col = data[:, 0]  # First column [MeV]
 stopping_power_col = data[:, 1]  # Second column [MeV / (mg/cm2)]
-range_col = data[:, 2]  # third column [cm]
-longitudinal_straggling_col = data[:, 3]  # fourth column [cm]
-lateral_straggling_col = data[:, 4]  # fifth column [cm]
+
+#Work around
+torch.set_default_device('cpu')
 ENERGY_TO_STOPPING_POWER_TABLE= splrep(energy_col, stopping_power_col)
-# ENERGY_TO_STOPPING_POWER_TABLE = (torch.tensor(ENERGY_TO_STOPPING_POWER_TABLE[0]),torch.tensor(ENERGY_TO_STOPPING_POWER_TABLE[1]))
-
-
+torch.set_default_device(device.type)
 
 class AtTpcMap:
     def __init__(self):
@@ -512,7 +515,7 @@ def get_energy_from_brho(brho):
     '''
     M_Ener = MASS_PROTON_AMU * 931.49401 #MeV
     p = brho * ATOMIC_NUMBER * (2.99792458 * 100) #MeV/c
-    energy = np.sqrt(p**2 + M_Ener**2) - M_Ener
+    energy = torch.sqrt(p**2 + M_Ener**2) - M_Ener
     return energy,p
 
 def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
@@ -527,15 +530,15 @@ def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
     plt.legend()
     plt.show()
 
-def get_mx_0(traj_coordinates,forced_phi=None):
+def get_mx_0(traj_coordinates):
     mx_0 = torch.zeros(6) #Size of state vector is 6x1
-    x = traj_coordinates[SS_VARIABLE.X.value,:]
-    y = traj_coordinates[SS_VARIABLE.Y.value,:]
-    z = traj_coordinates[SS_VARIABLE.Z.value,:]
+    x = traj_coordinates[SS_VARIABLE.X.value,:].cpu()
+    y = traj_coordinates[SS_VARIABLE.Y.value,:].cpu()
+    z = traj_coordinates[SS_VARIABLE.Z.value,:].cpu()
 
     NUM_POINTS = traj_coordinates.shape[1]
 
-    model, inliers = ransac(traj_coordinates[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],:].numpy().T, CircleModel, min_samples=max(3,int(NUM_POINTS*0.1)), residual_threshold=6, max_trials=1000)
+    model, inliers = ransac(torch.stack((x,y),dim=1).numpy(), CircleModel, min_samples=max(3,int(NUM_POINTS*0.1)), residual_threshold=6, max_trials=1000)
     x_center = model.params[0] 
     y_center = model.params[1] 
     init_radius = model.params[2] * CM__TO__M
@@ -557,13 +560,12 @@ def get_mx_0(traj_coordinates,forced_phi=None):
     init_theta = torch.arccos(vector[1])
 
     ### Init Energy ###
-    brho = init_radius * B / np.sin(init_theta)
+    brho = init_radius * B / torch.sin(init_theta)
     init_energy,init_p = get_energy_from_brho(brho)
 
     phis_over_time = torch.arctan2(y_from_center[1:]-y_from_center[0],x_from_center[1:]-x_from_center[0])
     avg_diff_between_phis = torch.median(phis_over_time.diff())
-    init_phi = torch.median((phis_over_time - avg_diff_between_phis * torch.arange(len(phis_over_time)))[:50])
-    # init_phi= torch.arctan2(y[1]-y[0],x[1]-x[0]) if forced_phi == None else forced_phi
+    init_phi = torch.median((phis_over_time - avg_diff_between_phis * torch.arange(len(phis_over_time),device='cpu'))[:50])
 
     estimated_parameters = {
         "inital_theta" : init_theta,
@@ -571,12 +573,13 @@ def get_mx_0(traj_coordinates,forced_phi=None):
         "init_radius" : init_radius,
         "init_energy" : init_energy
     }
+    print(estimated_parameters)
     mx_0[SS_VARIABLE.X.value] = x[0]
     mx_0[SS_VARIABLE.Y.value] = y[0]
     mx_0[SS_VARIABLE.Z.value] = z[0]
-    mx_0[SS_VARIABLE.Vx.value] = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * np.cos(init_phi)
-    mx_0[SS_VARIABLE.Vy.value] = convert_momentum_to_velocity(init_p) * np.sin(init_theta) * np.sin(init_phi)
-    mx_0[SS_VARIABLE.Vz.value] = convert_momentum_to_velocity(init_p) * np.cos(init_theta)
+    mx_0[SS_VARIABLE.Vx.value] = convert_momentum_to_velocity(init_p) * torch.sin(init_theta) * torch.cos(init_phi)
+    mx_0[SS_VARIABLE.Vy.value] = convert_momentum_to_velocity(init_p) * torch.sin(init_theta) * torch.sin(init_phi)
+    mx_0[SS_VARIABLE.Vz.value] = convert_momentum_to_velocity(init_p) * torch.cos(init_theta)
     return mx_0,estimated_parameters
 
 def convert_momentum_to_velocity(p):
@@ -754,10 +757,10 @@ def h(space_state_vector):
 def get_energy_straggling(delta_energy):
 
     # Calculate Energy Straggling
-    c_factor = 14 * np.sqrt(0.5) #14 * sqrt((Z_p * Z_t) / (Z_p**-0.33 + Z_t**-0.33)) ---> Atomic # is 1
+    c_factor = 14 * torch.sqrt(torch.tensor(0.5)) #14 * sqrt((Z_p * Z_t) / (Z_p**-0.33 + Z_t**-0.33)) ---> Atomic # is 1
     c_factor *= 1.65 * 2.35 #multiply by factor as in paper
     energy_straggling_FWHM = delta_energy**0.53 * c_factor #FWHM
-    energy_straggling_std = energy_straggling_FWHM/(2*np.sqrt(2*np.log(2))) #Gaussian: FWHM = 2 * sqrt(2ln2) * std
+    energy_straggling_std = energy_straggling_FWHM/(2*(2*torch.log(torch.tensor(2.0)))) #Gaussian: FWHM = 2 * sqrt(2ln2) * std
     energy_straggling = torch.randn(1) * energy_straggling_std
 
     return energy_straggling * 1e-3 #convert from KeV to MeV
@@ -767,8 +770,8 @@ def add_angular_straggling(x,y,z,energy,dist_traveled):
     #Calculate Angular Straggling
     tau = 41.5e3 * GAS_MEDIUM_DENSITY * dist_traveled / (2) #M2 = Z1 = Z2 = 1 --> (M2(Z1**2/3 + Z2**2/3)) = 1
     alpha_tag = 1*tau ** 0.55 if tau > 1000 else 0.92*tau**0.56
-    angular_straggling_FWHM = alpha_tag * np.sqrt(2) / (16.26 * energy)# Z1Z2 * sqrt(Z1**2/3 + Z2**2/3) = sqrt(2)
-    angular_straggling_std = angular_straggling_FWHM/(2*np.sqrt(2*np.log(2))) #Gaussian: FWHM = 2 * sqrt(2ln2) * std
+    angular_straggling_FWHM = alpha_tag * torch.sqrt(torch.tensor(2.0)) / (16.26 * energy)# Z1Z2 * sqrt(Z1**2/3 + Z2**2/3) = sqrt(2)
+    angular_straggling_std = angular_straggling_FWHM/(2*torch.sqrt(2*torch.log(torch.tensor(2.0)))) #Gaussian: FWHM = 2 * sqrt(2ln2) * std
     angular_straggling_milirads = torch.randn(1) * angular_straggling_std
     angular_straggling = angular_straggling_milirads * 1e-3 #convert from mili rads to rads
 
@@ -795,10 +798,15 @@ def get_deacceleration(energy_interp,add_energy_straggling,delta_pos):
     Output :
         interp_stopping_acc - [m/s^2]
     '''
-    interp_stopping_power = splev(energy_interp.detach(), ENERGY_TO_STOPPING_POWER_TABLE)#MeV/(mg/cm2)
+
+    #Work around
+    torch.set_default_device('cpu')
+    interp_stopping_power = splev(energy_interp.cpu(), ENERGY_TO_STOPPING_POWER_TABLE)    #MeV/(mg/cm2)
+    torch.set_default_device(device.type)  
+
 
     if add_energy_straggling:
-        energy_loss = interp_stopping_power * GAS_MEDIUM_DENSITY * delta_pos.numpy()
+        energy_loss = torch.tensor(interp_stopping_power) * GAS_MEDIUM_DENSITY * delta_pos
         energy_straggling = get_energy_straggling(energy_loss)
         interp_stopping_power = (energy_straggling + energy_loss) / (GAS_MEDIUM_DENSITY * delta_pos)
 
