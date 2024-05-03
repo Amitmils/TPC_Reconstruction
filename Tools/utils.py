@@ -17,6 +17,14 @@ from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
 
 
+if torch.cuda.is_available() and False:
+    device = torch.device('cuda')
+    print("Using GPU")
+    torch.set_default_tensor_type(torch.cuda.FloatTensor)
+else:
+    device = torch.device('cpu')
+    print("Using CPU")
+
 #  https://skisickness.com/2010/04/relativistic-kinematics-calculator/
 class SS_VARIABLE(enum.Enum):
     X = 0
@@ -87,6 +95,9 @@ range_col = data[:, 2]  # third column [cm]
 longitudinal_straggling_col = data[:, 3]  # fourth column [cm]
 lateral_straggling_col = data[:, 4]  # fifth column [cm]
 ENERGY_TO_STOPPING_POWER_TABLE= splrep(energy_col, stopping_power_col)
+# ENERGY_TO_STOPPING_POWER_TABLE = (torch.tensor(ENERGY_TO_STOPPING_POWER_TABLE[0]),torch.tensor(ENERGY_TO_STOPPING_POWER_TABLE[1]))
+
+
 
 class AtTpcMap:
     def __init__(self):
@@ -439,7 +450,6 @@ class Traj_Generator():
         i=1
         off_pad_plane = False
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
-            print(i)
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
 
             curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
