@@ -543,11 +543,11 @@ class Traj_Generator():
         self.obs_traj[SS_VARIABLE.Z.value,idx_of_first_hit_in_current_bucket:i] = linear_interp.reshape(-1,1)
 
 
-        obs,gt = self.get_obs_traj_from_pad(i-1)
+        # obs,gt = self.get_obs_traj_from_pad(i-1)
         traj_dict = {
             "t" : self.t[:i-1],
-            "real_traj" : gt,
-            "obs_traj" : obs,
+            "real_traj" : self.real_traj[:i-1],
+            "obs_traj" : self.obs_traj[:i-1],
             "energy" : self.energy[:i-1],
         }
 
