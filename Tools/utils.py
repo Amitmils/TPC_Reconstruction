@@ -68,6 +68,7 @@ MASS_PROTON_KG = torch.tensor(1.6726*1e-27)
 MASS_PROTON_AMU = torch.tensor(1.0072766)
 ATOMIC_NUMBER = 1
 C = 3*1e8
+DRIFT_VELOCITY_CM_US = 1 # [cm/us]
 
 #Setup Chamber parameters
 B = simulation_config.magnetic_field #Applied Magnetic Field (T)
@@ -120,16 +121,8 @@ class AtTpcMap:
         distances = np.abs(X[..., np.newaxis]  - mid_points_of_pad[relevant_pads,0]) + np.abs(Y[..., np.newaxis] - mid_points_of_pad[relevant_pads,1])
         closest_index = relevant_pads[np.argmin(distances, axis=2)]
         aa = np.unique(closest_index)
-        temp_count = np.zeros_like(self.bin_count)
         for id in aa :
-            energy_t_add_to_bin = np.sum(-1 * energy_loss * Z[closest_index == id])
-            self.bin_count[id] += energy_t_add_to_bin
-            temp_count[id] +=  energy_t_add_to_bin
-        pos_weights = temp_count/ np.sum(temp_count)
-        center_of_pads = self.AtPadCoord[:,3,:]
-        obs_x_y_pos = np.sum(center_of_pads * pos_weights.reshape(-1,1),axis=0)
-        return torch.tensor(obs_x_y_pos).reshape(-1,1)
-        
+            self.bin_count[id] += np.sum(-1 * energy_loss * Z[closest_index == id])
 
 
     def find_associated_pad(self,x,y):
@@ -381,7 +374,7 @@ class Traj_Generator():
     def __init__(self,max_traj_length = simulation_config.max_traj_length) -> None:
         self.max_traj_length = max_traj_length
         self.real_traj = torch.zeros((6,self.max_traj_length ,1))
-        self.obs_traj = torch.zeros((6,self.max_traj_length ,1))
+        self.obs_traj = torch.zeros((3,self.max_traj_length ,1))
         self.t = torch.zeros((self.max_traj_length ,1))
         self.energy = torch.zeros((self.max_traj_length ,1))
         self.delta_t = simulation_config.delta_t #step size in nseconds
@@ -428,7 +421,65 @@ class Traj_Generator():
             self.real_traj[SS_VARIABLE.Vx.value,0,:] = v * np.sin(theta) * np.cos(phi)
             self.real_traj[SS_VARIABLE.Vy.value,0,:] = v * np.sin(theta) * np.sin(phi)
             self.real_traj[SS_VARIABLE.Vz.value,0,:] = v * np.cos(theta)
-        self.obs_traj[:,0,:] =  self.real_traj[:,0,:]
+        self.obs_traj[:,0,:] =  self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],0,:]
+
+    def get_obs_traj_from_pad(self,traj_length):
+        
+        cluster_radius = 0.5 #cm
+        observation_traj = torch.zeros((3,traj_length ,1))
+        GT_traj = torch.zeros((6,traj_length ,1))
+
+        real_traj_XY = self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],:traj_length].squeeze().T #The XY of obs is still the real XY
+        mid_points_of_pad = torch.tensor(self.ATTPC_pad.AtPadCoord[:,-1,:])
+
+
+        # get point thats cluster_radius from first point
+        distances = torch.sqrt(torch.sum(real_traj_XY**2,dim=1))
+        distances-=cluster_radius
+        distances = torch.abs(distances)
+
+        cluster_mid_circle_point = real_traj_XY[torch.argmin(distances),:]
+
+        i = 0
+        while True:
+            # calculated obs XY
+            distance_central_circle_to_pads = torch.sum(torch.abs(cluster_mid_circle_point-mid_points_of_pad),dim=1)
+            relevant_pads = (distance_central_circle_to_pads < cluster_radius).nonzero().reshape(-1)
+            weights = self.ATTPC_pad.bin_count[relevant_pads] / np.sum(self.ATTPC_pad.bin_count[relevant_pads].squeeze())
+            observation_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i] = torch.sum(mid_points_of_pad[relevant_pads] * weights.reshape(-1,1),axis=0).reshape(-1,1).float()
+
+            # calculated obs Z
+            distance_central_circle_to_real_XY_hits = torch.sqrt(torch.sum((real_traj_XY - cluster_mid_circle_point)**2,dim=1))
+            id_real_traj_hits_in_circle = (distance_central_circle_to_real_XY_hits < cluster_radius).nonzero()
+            observation_traj[SS_VARIABLE.Z.value,i] =torch.mean(self.obs_traj[SS_VARIABLE.Z.value,id_real_traj_hits_in_circle]) #TODO make it weighted
+
+            #Get closest point of generated traj to observed for GT
+            distance_real_traj_to_obs = torch.sum(torch.sqrt((self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:].squeeze() - observation_traj[:,i])**2),dim=0)
+            id_of_closest_real_traj = torch.argmin(distance_real_traj_to_obs)
+            GT_traj[:,i,:] = self.real_traj[:,id_of_closest_real_traj,:]
+
+            id_of_next_mid_circle_point = id_real_traj_hits_in_circle[-1] + 1
+            if id_of_next_mid_circle_point > traj_length-1:
+                break
+            # get first point out of radius on the traj as next mid point
+            cluster_mid_circle_point = real_traj_XY[id_of_next_mid_circle_point,:]
+            i+=1
+
+
+        return observation_traj,GT_traj
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     def generate(self,energy=None,theta=None,phi = 0,init_x = 0,init_y = 0,init_z = 0,init_vx=None,init_vy=None,init_vz=None):
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
@@ -437,9 +488,13 @@ class Traj_Generator():
 
         self.energy[0] = curr_energy = get_energy_from_velocities(self.real_traj[SS_VARIABLE.Vx.value,0,:],self.real_traj[SS_VARIABLE.Vy.value,0,:],self.real_traj[SS_VARIABLE.Vz.value,0,:])
         i=1
+        z_resolution = DRIFT_VELOCITY_CM_US/simulation_config.sensor_sampling_rate_Mhz
+        current_z_bucket = 0
+        prev_z_bucket = 0
+        idx_of_first_hit_in_current_bucket = 0
+
         off_pad_plane = False
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
-            print(i)
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
 
             curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
@@ -452,28 +507,47 @@ class Traj_Generator():
             energy_loss = self.energy[i] - self.energy[i-1]
 
 
-            # Rough estimate of where XY is on pad
-            self.obs_traj[:2,i] = self.ATTPC_pad.find_associated_pad(curr_space_state_vector.squeeze(0)[0],curr_space_state_vector.squeeze(0)[1])
-            self.obs_traj[2,i] = self.real_traj[2,i]
-            distance_between_real_and_observed = torch.sum(torch.abs(self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i]
+            #For XY, just copy from real trajectory. At the end this will be used for sensor granularity
+            self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i] = self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i]
+            #For Z, use time buckets from sensory sampling
+            current_z_bucket = self.real_traj[SS_VARIABLE.Z.value,i]//z_resolution
+            if current_z_bucket!=prev_z_bucket:
+                #linear interpolation inside bucket
+                num_hits_in_z_bucket = i - idx_of_first_hit_in_current_bucket
+                indicies_prev_bucket = torch.arange(num_hits_in_z_bucket)
+                linear_interp = prev_z_bucket*z_resolution + indicies_prev_bucket * z_resolution/num_hits_in_z_bucket
+                self.obs_traj[SS_VARIABLE.Z.value,idx_of_first_hit_in_current_bucket:i] = linear_interp.reshape(-1,1)
+                #reset
+                idx_of_first_hit_in_current_bucket = i
+                prev_z_bucket = current_z_bucket
+
+            distance_between_real_and_observed = torch.sum(torch.abs(self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i]
                                                             - 
-                                                            self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],i]))
-            #If the physical distance is too large, it means the particle went off the pad plane
-            if distance_between_real_and_observed >= 1:
+                                                            self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i]))
+
+            # criteria if to end trajectory early due to physical chamber constraints
+            if distance_between_real_and_observed >= 1 or self.real_traj[SS_VARIABLE.Z.value,i] > simulation_config.chamber_length:
                 off_pad_plane = True
                 break
-            
-            #Fine tune observation with CoM
-            if simulation_config.CoM_observations and energy_loss:
-                X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
-                xx = self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
-                self.obs_traj[:2,i] = xx
+
+            #Add to pad energy bins
+            X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
+            self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
+
             i+=1
 
+        # Z calculations for all the remaining hits
+        num_hits_in_z_bucket = i - idx_of_first_hit_in_current_bucket
+        indicies_prev_bucket = torch.arange(num_hits_in_z_bucket)
+        linear_interp = prev_z_bucket*z_resolution + indicies_prev_bucket * z_resolution/num_hits_in_z_bucket
+        self.obs_traj[SS_VARIABLE.Z.value,idx_of_first_hit_in_current_bucket:i] = linear_interp.reshape(-1,1)
+
+
+        obs,gt = self.get_obs_traj_from_pad(i-1)
         traj_dict = {
             "t" : self.t[:i-1],
-            "real_traj" : self.real_traj[:,:i-1],
-            "obs_traj" : self.obs_traj[:,:i-1],
+            "real_traj" : gt,
+            "obs_traj" : obs,
             "energy" : self.energy[:i-1],
         }
 
@@ -481,7 +555,7 @@ class Traj_Generator():
         traj.off_pad_plane = off_pad_plane #for debug purposes
         traj.pad = self.ATTPC_pad #for debug purposes
 
-        _, estimated_para = get_mx_0(traj.y.squeeze(-1))
+        _, estimated_para = get_mx_0(traj.x_real.squeeze(-1))
         return traj,estimated_para
     
 def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
@@ -561,6 +635,7 @@ def get_mx_0(traj_coordinates,forced_phi=None):
         "init_radius" : init_radius,
         "init_energy" : init_energy
     }
+    print(estimated_parameters)
     mx_0[SS_VARIABLE.X.value] = x[0]
     mx_0[SS_VARIABLE.Y.value] = y[0]
     mx_0[SS_VARIABLE.Z.value] = z[0]

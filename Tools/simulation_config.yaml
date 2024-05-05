@@ -1,13 +1,15 @@
-max_traj_length : 1000
+max_traj_length : 2000
 stopping_power_table_path : "Tools/stpHydrogen_new.txt"
-delta_t : 0.01
-charge_std_x_axis : 0.5 # STD of diffusion in the x axis
-charge_std_y_axis : 0.5 # STD of diffusion in the y axis
+delta_t : 0.05
+charge_std_x_axis : 0.2 # STD of diffusion in the x axis
+charge_std_y_axis : 0.2 # STD of diffusion in the y axis
 
 #Config Parameters for Chamber
 magnetic_field : 2.85 #T
 electric_field : 500 #V/m
 gas_density : 0.033 #mg/cm3 at 1 bar
+sensor_sampling_rate_Mhz : 3.125 # [Mhz] 
+chamber_length : 100 #[cm]
 
 ##Config Parameters for Pad
 small_z_spacing : 0.00508 # 2 * 2.54 / 1000
@@ -33,9 +35,9 @@ output_dir : "TPC_Reconstruction/Simulations/Particle_Tracking/data" # where to 
 angle_energy_table_path : "Tools/Angle_Energy_Full.txt"
 
 ##Config Parameters for "generate_traj"
-energy : 40.998605300037 #MeV
-theta : 0.9660258343289447 #rad
-phi : 0.7610657131226479 #rad
+energy : 2 #MeV
+theta : 1 #rad
+phi : 1 #rad
 plot_traj: false #Flag if to plot trajectories, plots chosen trajectory one on top of the other. If this is false, disables the rests
 plot_real_traj : true # flag if to plot the real trajectory
 plot_observed_traj : true # flag if to plot observed trajectory
