@@ -260,7 +260,7 @@ class AtTpcMap:
                 z.append(self.bin_count[id])
 
         if len(z) > 0 and plot_energy:
-            ax.scatter(x,y,c=z,cmap='viridis',s=10)
+            ax.scatter(x,y,c=z,cmap='viridis',s=5)
         ax.set_aspect('equal')
         ax.autoscale()
         if show:
@@ -302,7 +302,8 @@ class Trajectory():
         self.t = traj_data['t'] if 't' in traj_data else torch.tensor([])
         self.delta_t = delta_t if delta_t is not None else self.t[1]-self.t[0]
         self.real_energy = traj_data['energy'] if 'energy' in traj_data else torch.tensor([])
-        self.x_real = traj_data['real_traj']
+        self.generated_traj = traj_data['real_traj']
+        self.x_real = traj_data['gt_traj']
         self.y = traj_data['obs_traj']
         self.traj_length = self.x_real.shape[1]
 
@@ -318,6 +319,7 @@ class Trajectory():
         space_state_vector_list = []
         space_state_vector_list_velo = []
         energy_list = []
+        color = []
         #Always make sure that observed is the last item in the list
         #this is done for naming reasons in plot
         if Trajectory_SS_Type.Observed in SS_to_plot:
@@ -329,6 +331,7 @@ class Trajectory():
                 space_state_vector_list.append(self.x_real)
                 space_state_vector_list_velo.append(self.x_real)
                 energy_list.append(self.real_energy)
+                color.append('blue')
             elif traj_ss_type == Trajectory_SS_Type.Estimated_FW:
                 space_state_vector_list.append(self.x_estimated_FW)
                 space_state_vector_list_velo.append(self.x_estimated_FW)
@@ -339,11 +342,13 @@ class Trajectory():
                 energy_list.append(self.energy_estimated_BW)
             elif traj_ss_type == Trajectory_SS_Type.Observed:
                 space_state_vector_list.append(self.y)
+                color.append('orange')
+
 
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         for i,space_state_vector in enumerate(space_state_vector_list):
-            ax.scatter3D(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:], space_state_vector[SS_VARIABLE.Z.value,:],label=SS_to_plot[i].value,s=3)
+            ax.scatter3D(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:], space_state_vector[SS_VARIABLE.Z.value,:],color=color[i],label=SS_to_plot[i].value,s=3)
         ax.legend()
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
@@ -354,8 +359,12 @@ class Trajectory():
         ax_pad = self.pad.draw_pads(show=False, plot_energy = plot_energy_on_pad)
         ax_no_pad = fig.add_subplot(111)
         for i,space_state_vector in enumerate(space_state_vector_list):
-            ax_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
-            ax_no_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],label=SS_to_plot[i].value,s=3)
+            ax_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],color=color[i],label=SS_to_plot[i].value,s=15)
+            ax_no_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],color=color[i],label=SS_to_plot[i].value,s=3)
+            if SS_to_plot[i] == Trajectory_SS_Type.Observed:
+                for i in range(len(space_state_vector[SS_VARIABLE.X.value,:])):
+                    circle = plt.Circle((space_state_vector[SS_VARIABLE.X.value,i], space_state_vector[SS_VARIABLE.Y.value,i]), 1, color='r', fill=False)
+                    plt.gca().add_artist(circle)
         ax_pad.legend()
         ax_pad.set_xlabel('X')
         ax_pad.set_ylabel('Y')
@@ -439,7 +448,7 @@ class Traj_Generator():
 
     def get_obs_traj_from_pad(self,traj_length):
         
-        cluster_radius = 0.5 #cm
+        cluster_radius = 1 #cm
         observation_traj = torch.zeros((3,traj_length ,1))
         GT_traj = torch.zeros((6,traj_length ,1))
 
@@ -461,7 +470,6 @@ class Traj_Generator():
             relevant_pads = (distance_central_circle_to_pads < cluster_radius).nonzero().reshape(-1)
             weights = self.ATTPC_pad.bin_count[relevant_pads] / np.sum(self.ATTPC_pad.bin_count[relevant_pads].squeeze())
             observation_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i] = torch.sum(mid_points_of_pad[relevant_pads] * weights.reshape(-1,1),axis=0).reshape(-1,1).float()
-
             # calculated obs Z
             distance_central_circle_to_real_XY_hits = torch.sqrt(torch.sum((real_traj_XY - cluster_mid_circle_point)**2,dim=1))
             id_real_traj_hits_in_circle = (distance_central_circle_to_real_XY_hits < cluster_radius).nonzero()
@@ -479,21 +487,7 @@ class Traj_Generator():
             cluster_mid_circle_point = real_traj_XY[id_of_next_mid_circle_point,:]
             i+=1
 
-
-        return observation_traj,GT_traj
-
-
-
-
-
-
-
-
-
-
-
-
-
+        return observation_traj[:,:i],GT_traj[:,:i]
 
     def generate(self,energy=None,theta=None,phi = 0,init_x = 0,init_y = 0,init_z = 0,init_vx=None,init_vy=None,init_vz=None):
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
@@ -510,7 +504,6 @@ class Traj_Generator():
         off_pad_plane = False
         while (curr_energy > self.energy[0] * 0.01 and i<self.max_traj_length):
             state_space_vector_prev= self.real_traj[:,i-1,:].unsqueeze(0)
-
             curr_space_state_vector = f(state_space_vector_prev,self.delta_t,add_straggling=True)
             self.real_traj[:,i] = curr_space_state_vector
 
@@ -535,19 +528,17 @@ class Traj_Generator():
                 idx_of_first_hit_in_current_bucket = i
                 prev_z_bucket = current_z_bucket
 
-            distance_between_real_and_observed = torch.sum(torch.abs(self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i]
-                                                            - 
-                                                            self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i]))
+            closest_pad = self.ATTPC_pad.find_associated_pad(self.real_traj[SS_VARIABLE.X.value,i],self.real_traj[SS_VARIABLE.Y.value,i])
+            distance_between_real_and_closest_pad = torch.sum(torch.abs(self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],i] -closest_pad))
 
             # criteria if to end trajectory early due to physical chamber constraints
-            if distance_between_real_and_observed >= 1 or self.real_traj[SS_VARIABLE.Z.value,i] > simulation_config.chamber_length:
+            if distance_between_real_and_closest_pad >= 1 or self.real_traj[SS_VARIABLE.Z.value,i] > simulation_config.chamber_length:
                 off_pad_plane = True
                 break
 
             #Add to pad energy bins
             X,Y,Z = self.gaussian_2d((self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item()),(simulation_config.charge_std_x_axis,simulation_config.charge_std_y_axis))
             self.ATTPC_pad.add_to_bin_count(X.copy(),Y.copy(),Z,energy_loss.item(),self.real_traj[SS_VARIABLE.X.value,i].item(),self.real_traj[SS_VARIABLE.Y.value,i].item())
-
             i+=1
 
         # Z calculations for all the remaining hits
@@ -557,19 +548,21 @@ class Traj_Generator():
         self.obs_traj[SS_VARIABLE.Z.value,idx_of_first_hit_in_current_bucket:i] = linear_interp.reshape(-1,1)
 
 
-        # obs,gt = self.get_obs_traj_from_pad(i-1)
+        obs,gt = self.get_obs_traj_from_pad(i-1)
+        # obs = self.obs_traj[:i-1]
+        # gt = self.real_traj[:i-1]
         traj_dict = {
             "t" : self.t[:i-1],
             "real_traj" : self.real_traj[:i-1],
-            "obs_traj" : self.obs_traj[:i-1],
             "energy" : self.energy[:i-1],
+            "gt_traj" : gt,
+            "obs_traj" : obs,#self.obs_traj[:i-1],
         }
-
         traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
         traj.off_pad_plane = off_pad_plane #for debug purposes
         traj.pad = self.ATTPC_pad #for debug purposes
 
-        _, estimated_para = get_mx_0(traj.x_real.squeeze(-1))
+        _, estimated_para = get_mx_0(gt.squeeze(-1))
         return traj,estimated_para
     
 def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
@@ -607,13 +600,13 @@ def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
 
 def get_mx_0(traj_coordinates):
     mx_0 = torch.zeros(6) #Size of state vector is 6x1
-    x = traj_coordinates[SS_VARIABLE.X.value,:].cpu()
-    y = traj_coordinates[SS_VARIABLE.Y.value,:].cpu()
-    z = traj_coordinates[SS_VARIABLE.Z.value,:].cpu()
 
-    NUM_POINTS = traj_coordinates.shape[1]
-
-    model, inliers = ransac(torch.stack((x,y),dim=1).numpy(), CircleModel, min_samples=max(3,int(NUM_POINTS*0.1)), residual_threshold=6, max_trials=1000)
+    # only use the beginning of the traj for estimation
+    num_points_for_estimation = 30
+    x = traj_coordinates[SS_VARIABLE.X.value,:num_points_for_estimation].cpu()
+    y = traj_coordinates[SS_VARIABLE.Y.value,:num_points_for_estimation].cpu()
+    z = traj_coordinates[SS_VARIABLE.Z.value,:num_points_for_estimation].cpu()
+    model, inliers = ransac(torch.stack((x,y),dim=1).numpy(), CircleModel, min_samples=min(10,traj_coordinates.shape[1]),residual_threshold=6, max_trials=1000)
     x_center = model.params[0] 
     y_center = model.params[1] 
     init_radius = model.params[2] * CM__TO__M
@@ -626,7 +619,7 @@ def get_mx_0(traj_coordinates):
     phis = phis[0] - phis
     arc_lengths  = phis * init_radius
 
-    ransacc = RANSACRegressor(LinearRegression(),min_samples=max(2,int(NUM_POINTS*0.1)),residual_threshold=6.0,max_trials=1000)
+    ransacc = RANSACRegressor(LinearRegression(),min_samples=min(10,traj_coordinates.shape[1]),residual_threshold=6.0,max_trials=1000)
     ransacc.fit(arc_lengths.reshape(-1,1), z.numpy() * CM__TO__M)
     vector = torch.tensor([1,ransacc.estimator_.intercept_ + ransacc.estimator_.coef_[0]])
     vector /= torch.norm(vector,p=2)
@@ -648,7 +641,8 @@ def get_mx_0(traj_coordinates):
         "init_radius" : init_radius,
         "init_energy" : init_energy
     }
-    print(estimated_parameters)
+    if simulation_config.mode == "generate_traj":
+        print(estimated_parameters)
     mx_0[SS_VARIABLE.X.value] = x[0]
     mx_0[SS_VARIABLE.Y.value] = y[0]
     mx_0[SS_VARIABLE.Z.value] = z[0]
@@ -897,7 +891,7 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
     assert dataset_name not in os.listdir(output_dir), f"Dataset with name '{dataset_name}' Exists!"
 
     ## Get Angle-Energy
-    data = np.loadtxt("Tools/Angle_Energy_Full.txt")
+    data = np.loadtxt(simulation_config.angle_energy_table_path)
     theta = np.radians(data[:, 0]) 
     energy = data[:, 1]  #MeV
     np.random.shuffle(permutation :=np.arange(1, len(energy)))
@@ -907,7 +901,7 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
 
     generator = Traj_Generator()
     Dataset = []
-    traj_meta_data = {"ID": [],"energy":[],"est_energy":[],"phi":[],"est_phi":[],"theta":[],"est_theta":[],'set':[]}
+    traj_meta_data = {"ID": [],"energy":[],"est_energy":[],'energy_error_%':[],"phi":[],"est_phi":[],'phi_error_%':[],"theta":[],"est_theta":[],'theta_error_%':[],'set':[]}
     for i in range(N_Train + N_CV + N_Test):
         print(f"Generating trajectory {i}; Energy : {energy[i]},Theta : {theta[i]},Phi : {phi[i]}")
         traj,traj_estimated_parameters = generator.generate(energy=energy[i],theta=theta[i],phi=phi[i])
@@ -916,10 +910,13 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
         traj_meta_data['ID'].append(i)
         traj_meta_data['energy'].append(energy[i])
         traj_meta_data['est_energy'].append(traj_estimated_parameters['init_energy'].item())
+        traj_meta_data['energy_error_%'].append(np.abs(100 * (traj_estimated_parameters['init_energy'].item() - energy[i])/energy[i]))
         traj_meta_data['phi'].append(phi[i])
         traj_meta_data['est_phi'].append(traj_estimated_parameters['initial_phi'].item())
+        traj_meta_data['phi_error_%'].append(np.abs(100 * (traj_estimated_parameters['initial_phi'].item() - phi[i])/phi[i]))
         traj_meta_data['theta'].append(theta[i])
         traj_meta_data['est_theta'].append(traj_estimated_parameters['inital_theta'].item())
+        traj_meta_data['theta_error_%'].append(np.abs(100 * (traj_estimated_parameters['inital_theta'].item() - theta[i])/theta[i]))
         if i<N_Train:
             traj_meta_data['set'].append('train')
         elif i < N_CV:
