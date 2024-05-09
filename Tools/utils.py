@@ -562,7 +562,7 @@ class Traj_Generator():
         traj.off_pad_plane = off_pad_plane #for debug purposes
         traj.pad = self.ATTPC_pad #for debug purposes
 
-        _, estimated_para = get_mx_0(gt.squeeze(-1))
+        _, estimated_para = get_mx_0(obs.squeeze(-1))
         return traj,estimated_para
     
 def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
@@ -639,7 +639,10 @@ def get_mx_0(traj_coordinates):
         "inital_theta" : init_theta,
         "initial_phi" : init_phi,
         "init_radius" : init_radius,
-        "init_energy" : init_energy
+        "init_energy" : init_energy,
+        "inital_theta_point" : torch.arctan2(torch.sqrt(traj_coordinates[0,0]**2 + traj_coordinates[1,0]**2),traj_coordinates[2,0]),
+        "inital_energy_point" : get_energy_from_velocities(traj_coordinates[-3,0],traj_coordinates[-2,0],traj_coordinates[-1,0])
+
     }
     if simulation_config.mode == "generate_traj":
         print(estimated_parameters)
@@ -901,22 +904,28 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
 
     generator = Traj_Generator()
     Dataset = []
-    traj_meta_data = {"ID": [],"energy":[],"est_energy":[],'energy_error_%':[],"phi":[],"est_phi":[],'phi_error_%':[],"theta":[],"est_theta":[],'theta_error_%':[],'set':[]}
+    traj_meta_data = {"ID": [],"energy":[],"est_energy":[],'energy_error_%':[],"est_energy_point":[],'energy_point_error_%':[],"phi":[],"est_phi":[],'phi_error_%':[],"theta":[],"est_theta":[],'theta_error_%':[],"est_theta_point":[],'theta_point_error_%':[],'set':[]}
     for i in range(N_Train + N_CV + N_Test):
         print(f"Generating trajectory {i}; Energy : {energy[i]},Theta : {theta[i]},Phi : {phi[i]}")
-        traj,traj_estimated_parameters = generator.generate(energy=energy[i],theta=theta[i],phi=phi[i])
+        traj,obs_traj_estimated_parameters = generator.generate(energy=energy[i],theta=theta[i],phi=phi[i])
+
         traj.ID = i
         Dataset.append(copy.deepcopy(traj))
         traj_meta_data['ID'].append(i)
         traj_meta_data['energy'].append(energy[i])
-        traj_meta_data['est_energy'].append(traj_estimated_parameters['init_energy'].item())
-        traj_meta_data['energy_error_%'].append(np.abs(100 * (traj_estimated_parameters['init_energy'].item() - energy[i])/energy[i]))
+        traj_meta_data['est_energy'].append(obs_traj_estimated_parameters['init_energy'].item())
+        traj_meta_data['energy_error_%'].append(np.abs(100 * (obs_traj_estimated_parameters['init_energy'].item() - energy[i])/energy[i]))
+        traj_meta_data['est_energy_point'].append(obs_traj_estimated_parameters['inital_energy_point'].item())
+        traj_meta_data['energy_point_error_%'].append(np.abs(100 * (obs_traj_estimated_parameters['inital_energy_point'].item() - energy[i])/energy[i]))
         traj_meta_data['phi'].append(phi[i])
-        traj_meta_data['est_phi'].append(traj_estimated_parameters['initial_phi'].item())
-        traj_meta_data['phi_error_%'].append(np.abs(100 * (traj_estimated_parameters['initial_phi'].item() - phi[i])/phi[i]))
+        traj_meta_data['est_phi'].append(obs_traj_estimated_parameters['initial_phi'].item())
+        traj_meta_data['phi_error_%'].append(np.abs(100 * (obs_traj_estimated_parameters['initial_phi'].item() - phi[i])/phi[i]))
         traj_meta_data['theta'].append(theta[i])
-        traj_meta_data['est_theta'].append(traj_estimated_parameters['inital_theta'].item())
-        traj_meta_data['theta_error_%'].append(np.abs(100 * (traj_estimated_parameters['inital_theta'].item() - theta[i])/theta[i]))
+        traj_meta_data['est_theta'].append(obs_traj_estimated_parameters['inital_theta'].item())
+        traj_meta_data['theta_error_%'].append(np.abs(100 * (obs_traj_estimated_parameters['inital_theta'].item() - theta[i])/theta[i]))
+        traj_meta_data['est_theta_point'].append(obs_traj_estimated_parameters['inital_theta_point'].item())
+        traj_meta_data['theta_point_error_%'].append(np.abs(100 * (obs_traj_estimated_parameters['inital_theta_point'].item() - theta[i])/theta[i]))
+
         if i<N_Train:
             traj_meta_data['set'].append('train')
         elif i < N_CV:
