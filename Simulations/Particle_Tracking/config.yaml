@@ -6,7 +6,7 @@ observation_vector_size: 3
 train_set_size: 150
 CV_set_size: 250
 test_set_size: 250
-batch_size: 150
+batch_size: 25
 train: true
 test_mode: FW + BW
 
@@ -61,6 +61,7 @@ input_dim_mult_RTSNet: 5
 output_dim_mult_RTSNet: 40
 
 
-#Paths
+# #Paths
+
 path_results: "Simulations/Particle_Tracking/models"
-Dataset_path: "TPC_Reconstruction/Simulations/Particle_Tracking/data/CoM_Obs_03_03_05_24__15_46.pt"
+Dataset_path: "Simulations\\Particle_Tracking\\data\\Dataset_Debug_09_05_24__12_10.pt"

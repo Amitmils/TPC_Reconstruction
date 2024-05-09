@@ -30,7 +30,7 @@ print("Current Time =", strTime)
 ##########################
 ### Parameter settings ###
 ##########################
-system_config= CONFIG("/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/config.yaml")
+system_config= CONFIG("Simulations\Particle_Tracking\config.yaml")
 system_config.use_cuda = False # use GPU or not
 if system_config.use_cuda:
    if torch.cuda.is_available():

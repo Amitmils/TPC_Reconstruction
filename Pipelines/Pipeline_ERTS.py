@@ -144,15 +144,14 @@ class Pipeline_ERTS:
         for ti in range(0, self.num_epochs):
 
             if ti == self.next_phase_change:
+                #save best model of Phase
+                torch.save(best_model, os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
                 self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
                 self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
                 self.MSE_cv_dB_opt = 1000
                 self.phase_change_epochs.append(ti) #for Visualization - aggregate the epochs which a phase changed
                 self.switch_to_next_phase()
                 self.phase_modes.append(self.TRAINING_MODE.value)#for Visualization
-
-
-
 
             ###############################
             ### Training Sequence Batch ###
@@ -332,10 +331,13 @@ class Pipeline_ERTS:
                 if (self.MSE_cv_dB_epoch[ti] < self.MSE_cv_dB_opt or ti==0):
                     self.MSE_cv_dB_opt = self.MSE_cv_dB_epoch[ti]
                     self.MSE_cv_idx_opt = ti
+                    best_model = self.model.state_dict().copy()
                     
-                    torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
-                    if int(self.current_phase) == self.total_num_phases-1:
-                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt")) 
+                    # torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
+                    # if int(self.current_phase) == self.total_num_phases-1:
+                    #     torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt")) 
+
+            torch.save(best_model, os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt"))
 
             ########################
             ### Training Summary ###

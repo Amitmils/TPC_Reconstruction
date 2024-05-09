@@ -17,7 +17,7 @@ from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
 
 
-if torch.cuda.is_available():
+if torch.cuda.is_available() and False:
     device = torch.device('cuda')
     print("Using GPU")
     torch.set_default_dtype(torch.float32)  # Set default data type
@@ -451,6 +451,7 @@ class Traj_Generator():
         cluster_radius = 1 #cm
         observation_traj = torch.zeros((3,traj_length ,1))
         GT_traj = torch.zeros((6,traj_length ,1))
+        timestamp_of_GT = torch.zeros(traj_length)
 
         real_traj_XY = self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],:traj_length].squeeze().T #The XY of obs is still the real XY
         mid_points_of_pad = torch.tensor(self.ATTPC_pad.AtPadCoord[:,-1,:])
@@ -479,6 +480,7 @@ class Traj_Generator():
             distance_real_traj_to_obs = torch.sum(torch.sqrt((self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:].squeeze() - observation_traj[:,i])**2),dim=0)
             id_of_closest_real_traj = torch.argmin(distance_real_traj_to_obs)
             GT_traj[:,i,:] = self.real_traj[:,id_of_closest_real_traj,:]
+            timestamp_of_GT[i] = id_of_closest_real_traj * self.delta_t
 
             id_of_next_mid_circle_point = id_real_traj_hits_in_circle[-1] + 1
             if id_of_next_mid_circle_point > traj_length-1:
@@ -487,7 +489,7 @@ class Traj_Generator():
             cluster_mid_circle_point = real_traj_XY[id_of_next_mid_circle_point,:]
             i+=1
 
-        return observation_traj[:,:i],GT_traj[:,:i]
+        return observation_traj[:,:i],GT_traj[:,:i],timestamp_of_GT[:i]
 
     def generate(self,energy=None,theta=None,phi = 0,init_x = 0,init_y = 0,init_z = 0,init_vx=None,init_vy=None,init_vz=None):
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
@@ -548,15 +550,13 @@ class Traj_Generator():
         self.obs_traj[SS_VARIABLE.Z.value,idx_of_first_hit_in_current_bucket:i] = linear_interp.reshape(-1,1)
 
 
-        obs,gt = self.get_obs_traj_from_pad(i-1)
-        # obs = self.obs_traj[:i-1]
-        # gt = self.real_traj[:i-1]
+        obs,gt,gt_ts = self.get_obs_traj_from_pad(i-1)
         traj_dict = {
-            "t" : self.t[:i-1],
+            "t" : gt_ts,
             "real_traj" : self.real_traj[:i-1],
             "energy" : self.energy[:i-1],
             "gt_traj" : gt,
-            "obs_traj" : obs,#self.obs_traj[:i-1],
+            "obs_traj" : obs,
         }
         traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
         traj.off_pad_plane = off_pad_plane #for debug purposes
@@ -873,7 +873,7 @@ def get_deacceleration(energy_interp,add_energy_straggling,delta_pos):
 
     #Work around
     torch.set_default_device('cpu')
-    interp_stopping_power = splev(energy_interp.cpu(), ENERGY_TO_STOPPING_POWER_TABLE)    #MeV/(mg/cm2)
+    interp_stopping_power = splev(energy_interp.cpu().detach(), ENERGY_TO_STOPPING_POWER_TABLE)    #MeV/(mg/cm2)
     torch.set_default_device(device.type)  
 
 
@@ -887,7 +887,6 @@ def get_deacceleration(energy_interp,add_energy_straggling,delta_pos):
     return interp_stopping_acc.float()
 
 def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
-    assert (N_Train+N_Test+N_CV)<=2000, "Maximum of 2k Trajectories can be made"
     time_stamp = datetime.now().strftime("_%d_%m_%y__%H_%M")
     dataset_name = dataset_name + time_stamp
     os.makedirs(output_dir,exist_ok=True)
@@ -928,7 +927,7 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
 
         if i<N_Train:
             traj_meta_data['set'].append('train')
-        elif i < N_CV:
+        elif i < N_CV + N_Train:
             traj_meta_data['set'].append('validation')
         else:
             traj_meta_data['set'].append('test')
