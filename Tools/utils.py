@@ -292,15 +292,13 @@ class AtTpcMap:
         return orthocenter
 
 class Trajectory():
-    def __init__(self,traj_data,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,init_energy=None,init_teta=None,init_phi=None,delta_t=None) -> None:
-        assert delta_t is not None or len(traj_data['t']) > 0, "delta_t or time stamps are needed for propagation function!"
-
+    def __init__(self,traj_data,delta_t,data_source:Trajectory_Source = Trajectory_Source.Amit_Simulated,init_energy=None,init_teta=None,init_phi=None) -> None:
         self.data_src = data_source
         self.init_energy = init_energy
         self.init_teta = init_teta
         self.init_phi = init_phi
         self.t = traj_data['t'] if 't' in traj_data else torch.tensor([])
-        self.delta_t = delta_t if delta_t is not None else self.t[1]-self.t[0]
+        self.delta_t = delta_t
         self.real_energy = traj_data['energy'] if 'energy' in traj_data else torch.tensor([])
         self.generated_traj = traj_data['real_traj']
         self.x_real = traj_data['gt_traj']
@@ -451,7 +449,7 @@ class Traj_Generator():
         cluster_radius = 1 #cm
         observation_traj = torch.zeros((3,traj_length ,1))
         GT_traj = torch.zeros((6,traj_length ,1))
-        timestamp_of_GT = torch.zeros(traj_length)
+        index_of_GT = torch.zeros(traj_length,dtype=torch.int)
 
         real_traj_XY = self.obs_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value],:traj_length].squeeze().T #The XY of obs is still the real XY
         mid_points_of_pad = torch.tensor(self.ATTPC_pad.AtPadCoord[:,-1,:])
@@ -480,7 +478,7 @@ class Traj_Generator():
             distance_real_traj_to_obs = torch.sum(torch.sqrt((self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:].squeeze() - observation_traj[:,i])**2),dim=0)
             id_of_closest_real_traj = torch.argmin(distance_real_traj_to_obs)
             GT_traj[:,i,:] = self.real_traj[:,id_of_closest_real_traj,:]
-            timestamp_of_GT[i] = id_of_closest_real_traj * self.delta_t
+            index_of_GT[i] = id_of_closest_real_traj
 
             id_of_next_mid_circle_point = id_real_traj_hits_in_circle[-1] + 1
             if id_of_next_mid_circle_point > traj_length-1:
@@ -489,7 +487,7 @@ class Traj_Generator():
             cluster_mid_circle_point = real_traj_XY[id_of_next_mid_circle_point,:]
             i+=1
 
-        return observation_traj[:,:i],GT_traj[:,:i],timestamp_of_GT[:i]
+        return observation_traj[:,:i],GT_traj[:,:i],index_of_GT[:i]
 
     def generate(self,energy=None,theta=None,phi = 0,init_x = 0,init_y = 0,init_z = 0,init_vx=None,init_vy=None,init_vz=None):
         self.set_init_values(energy=energy,theta=theta,phi=phi,init_x=init_x,
@@ -550,15 +548,15 @@ class Traj_Generator():
         self.obs_traj[SS_VARIABLE.Z.value,idx_of_first_hit_in_current_bucket:i] = linear_interp.reshape(-1,1)
 
 
-        obs,gt,gt_ts = self.get_obs_traj_from_pad(i-1)
+        obs,gt,gt_idx = self.get_obs_traj_from_pad(i-1)
         traj_dict = {
-            "t" : gt_ts,
+            "t" : gt_idx,
             "real_traj" : self.real_traj[:i-1],
             "energy" : self.energy[:i-1],
             "gt_traj" : gt,
             "obs_traj" : obs,
         }
-        traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi)
+        traj = Trajectory(traj_data=traj_dict,init_energy=self.init_energy,init_teta=self.init_teta,init_phi=self.init_phi,delta_t=self.delta_t)
         traj.off_pad_plane = off_pad_plane #for debug purposes
         traj.pad = self.ATTPC_pad #for debug purposes
 

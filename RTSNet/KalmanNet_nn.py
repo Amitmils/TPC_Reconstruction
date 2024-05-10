@@ -133,9 +133,15 @@ class KalmanNetNN(torch.nn.Module):
     ######################
     ### Compute Priors ###
     ######################
-    def step_prior(self):
+    def step_prior(self,xt_minus_1 = None):
         # Predict the 1-st moment of x
-        self.m1x_prior = self.f(self.m1x_posterior,self.config.delta_t)
+        if xt_minus_1 is None:
+            self.m1x_prior = self.f(self.m1x_posterior,self.config.FTT_delta_t)
+        else:
+            #in this case, our last posterior is not t-1 (data imputation mode)
+            self.m1x_prior = self.f(xt_minus_1,self.config.FTT_delta_t)
+            # print(f"t-1 : {xt_minus_1} , t : {self.m1x_prior}")
+
 
         # Predict the 1-st moment of y  
         self.m1y = self.h(self.m1x_prior)
@@ -165,10 +171,10 @@ class KalmanNetNN(torch.nn.Module):
     #######################
     ### Kalman Net Step ###
     #######################
-    def KNet_step(self, y):
+    def KNet_step(self, y,xt_minus_1):
 
         # Compute Priors
-        self.step_prior()
+        self.step_prior(xt_minus_1)
 
         # Compute Kalman Gain
         self.step_KGain_est(y)

@@ -200,13 +200,13 @@ class RTSNetNN(KalmanNetNN):
     ###############
     ### Forward ###
     ###############
-    def forward(self, yt = None, filter_x = None, filter_x_nexttime = None, smoother_x_tplus2 = None):
+    def forward(self, yt = None,xt_minus_1 = None, filter_x = None, filter_x_nexttime = None, smoother_x_tplus2 = None):
         if yt is None:
             # BW pass
             return self.RTSNet_step(filter_x, filter_x_nexttime, smoother_x_tplus2)
         else:
             # FW pass
-            return self.KNet_step(yt)
+            return self.KNet_step(yt,xt_minus_1)
     
     #########################
     ### Init Hidden State ###

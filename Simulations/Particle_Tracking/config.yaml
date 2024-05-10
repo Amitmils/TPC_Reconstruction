@@ -6,7 +6,8 @@ observation_vector_size: 3
 train_set_size: 150
 CV_set_size: 250
 test_set_size: 250
-batch_size: 25
+batch_size: 1
+force_batch: [] #For debug
 train: true
 test_mode: FW + BW
 
@@ -18,7 +19,7 @@ training_scheduler:
     mode: FW
     lr: 1.0e-3
     n_epochs: 50
-    max_train_sequence_length: 25
+    max_train_sequence_length: -1
   '1':
     mode: FW
     lr: 1.0e-4
@@ -64,4 +65,4 @@ output_dim_mult_RTSNet: 40
 # #Paths
 
 path_results: "Simulations/Particle_Tracking/models"
-Dataset_path: "Simulations\\Particle_Tracking\\data\\Dataset_Debug_09_05_24__12_10.pt"
+Dataset_path: "Simulations\\Particle_Tracking\\data\\Dataset_Debug_09_05_24__18_41.pt"
