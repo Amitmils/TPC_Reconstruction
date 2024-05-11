@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as func
+import time
 
 from RTSNet.KalmanNet_nn import KalmanNetNN
 
@@ -32,7 +33,6 @@ class RTSNetNN(KalmanNetNN):
                 self.RTSNET_params.append(param)
             else:
                 self.KNET_params.append(param)
-
 
 
     #################################################
@@ -92,8 +92,11 @@ class RTSNetNN(KalmanNetNN):
     ##############################
     ### Innovation Computation ###
     ##############################
-    def S_Innovation(self, filter_x):
-        self.filter_x_prior = self.f(filter_x,self.config.delta_t)
+    def S_Innovation(self, filter_x,num_prop =1):
+        temp = filter_x
+        for i in range(num_prop):
+            temp = self.f(temp,self.config.FTT_delta_t)
+        self.filter_x_prior = temp
         # x_t+1|T - x_t+1|t (AMIT)
         self.dx = self.s_m1x_nexttime - self.filter_x_prior
 
@@ -143,7 +146,6 @@ class RTSNetNN(KalmanNetNN):
         INOV = torch.matmul(self.SGain, self.dx)
         self.s_m1x_nexttime = filter_x + INOV
 
-        # return
         return self.s_m1x_nexttime
 
     ##########################

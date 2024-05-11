@@ -15,18 +15,19 @@ from skimage.measure import CircleModel,LineModelND, ransac
 from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
+import time
 
 
-if torch.cuda.is_available() and False:
-    device = torch.device('cuda')
-    print("Using GPU")
-    torch.set_default_dtype(torch.float32)  # Set default data type
-    torch.set_default_device('cuda')  # Set default device (optional)
-    #Setting default device to 'cuda' causes some problems with the spline functions that try to turn tensors into numpy inside the functions
-    #therefore, as a WA i set this to cpu before those functions. These functions dont need to be backproped through
-else:
-    device = torch.device('cpu')
-    print("Using CPU")
+# if torch.cuda.is_available():
+#     device = torch.device('cuda')
+#     print("Using GPU")
+#     torch.set_default_dtype(torch.float32)  # Set default data type
+#     torch.set_default_device('cuda')  # Set default device (optional)
+#     #Setting default device to 'cuda' causes some problems with the spline functions that try to turn tensors into numpy inside the functions
+#     #therefore, as a WA i set this to cpu before those functions. These functions dont need to be backproped through
+# else:
+#     device = torch.device('cpu')
+#     print("Using CPU")
 
 #  https://skisickness.com/2010/04/relativistic-kinematics-calculator/
 class SS_VARIABLE(enum.Enum):
@@ -51,10 +52,11 @@ class Trajectory_Source(enum.Enum):
     Experiment = 2
 
 class Trajectory_SS_Type(enum.Enum):
-    Real = "Real SS"
+    FTT = "Fine Tuned Traj"
+    GTT = "Ground Truth Traj"
+    OT = "Observed Traj"
     Estimated_FW = "Estimated FW SS"
     Estimated_BW = "Estimated BW SS"
-    Observed = "Observed"
 
 class CONFIG():
     def __init__(self,config_path) -> None:
@@ -70,8 +72,24 @@ class CONFIG():
         for key,value in data.items():
             setattr(self,key,value)
         return data
-    
+
+
 simulation_config= CONFIG("Tools/simulation_config.yaml")
+if __name__ == "__main__":
+        device = torch.device('cpu')
+        print("Using CPU")
+else:
+    system_config= CONFIG("Simulations\Particle_Tracking\config.yaml")
+    if system_config.use_cuda:
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+            torch.set_default_dtype(torch.float32) 
+            torch.set_default_device('cuda')
+        else:
+            raise Exception("No GPU found, please set args.use_cuda = False")
+    else:
+        device = torch.device('cpu')
+        torch.set_default_device('cpu')
 
 # Physical quantities needed
 Q_PROTON = torch.tensor(1.6022*1e-19)
@@ -320,25 +338,31 @@ class Trajectory():
         color = []
         #Always make sure that observed is the last item in the list
         #this is done for naming reasons in plot
-        if Trajectory_SS_Type.Observed in SS_to_plot:
-            index = SS_to_plot.index(Trajectory_SS_Type.Observed)
+        if Trajectory_SS_Type.OT in SS_to_plot:
+            index = SS_to_plot.index(Trajectory_SS_Type.OT)
             SS_to_plot.append(SS_to_plot.pop(index))
     
         for traj_ss_type in SS_to_plot:
-            if traj_ss_type == Trajectory_SS_Type.Real:
+            if traj_ss_type == Trajectory_SS_Type.GTT:
                 space_state_vector_list.append(self.x_real)
                 space_state_vector_list_velo.append(self.x_real)
                 energy_list.append(self.real_energy)
                 color.append('blue')
+            elif traj_ss_type == Trajectory_SS_Type.FTT:
+                space_state_vector_list.append(self.generated_traj)
+                space_state_vector_list_velo.append(self.generated_traj)
+                energy_list.append(self.real_energy)
+                color.append('black')
             elif traj_ss_type == Trajectory_SS_Type.Estimated_FW:
                 space_state_vector_list.append(self.x_estimated_FW)
                 space_state_vector_list_velo.append(self.x_estimated_FW)
                 energy_list.append(self.energy_estimated_FW)
+                color.append('green')
             elif traj_ss_type == Trajectory_SS_Type.Estimated_BW:
                 space_state_vector_list.append(self.x_estimated_BW)
                 space_state_vector_list_velo.append(self.x_estimated_BW)
                 energy_list.append(self.energy_estimated_BW)
-            elif traj_ss_type == Trajectory_SS_Type.Observed:
+            elif traj_ss_type == Trajectory_SS_Type.OT:
                 space_state_vector_list.append(self.y)
                 color.append('orange')
 
@@ -359,7 +383,7 @@ class Trajectory():
         for i,space_state_vector in enumerate(space_state_vector_list):
             ax_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],color=color[i],label=SS_to_plot[i].value,s=15)
             ax_no_pad.scatter(space_state_vector[SS_VARIABLE.X.value,:], space_state_vector[SS_VARIABLE.Y.value,:],color=color[i],label=SS_to_plot[i].value,s=3)
-            if SS_to_plot[i] == Trajectory_SS_Type.Observed:
+            if SS_to_plot[i] == Trajectory_SS_Type.OT:
                 for i in range(len(space_state_vector[SS_VARIABLE.X.value,:])):
                     circle = plt.Circle((space_state_vector[SS_VARIABLE.X.value,i], space_state_vector[SS_VARIABLE.Y.value,i]), 1, color='r', fill=False)
                     plt.gca().add_artist(circle)
@@ -372,22 +396,22 @@ class Trajectory():
         ax_no_pad.set_ylabel('Y')
         ax_no_pad.set_title('2D Trajectory')
 
-        if len(space_state_vector_list_velo):
-            fig, axs = plt.subplots(2)  # 2 rows of subplots
-            for i,space_state_vector in enumerate(space_state_vector_list_velo):
-                axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
-                axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
-                axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
-            axs[0].set_title("Velocities Over Time")
-            axs[0].set_ylabel(f"Velocity [m/s]")
-            axs[0].set_xticks([])
-            axs[0].legend()
-            for i,energy in enumerate(energy_list):
-                axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
-            axs[1].set_title('Kinetic Energy Over Time')
-            axs[1].set_xlabel('Time [s]')
-            axs[1].set_ylabel('Energy [MeV]')
-            axs[1].legend()
+        # if len(space_state_vector_list_velo):
+        #     fig, axs = plt.subplots(2)  # 2 rows of subplots
+        #     for i,space_state_vector in enumerate(space_state_vector_list_velo):
+        #         axs[0].scatter(range(len(space_state_vector[SS_VARIABLE.Vx.value,:])),space_state_vector[SS_VARIABLE.Vx.value,:],label=f'x {SS_to_plot[i].value}',s=3)
+        #         axs[0].plot(space_state_vector[SS_VARIABLE.Vy.value,:],label=f'y {SS_to_plot[i].value}')
+        #         axs[0].plot(space_state_vector[SS_VARIABLE.Vz.value,:],label=f'z {SS_to_plot[i].value}')
+        #     axs[0].set_title("Velocities Over Time")
+        #     axs[0].set_ylabel(f"Velocity [m/s]")
+        #     axs[0].set_xticks([])
+        #     axs[0].legend()
+        #     for i,energy in enumerate(energy_list):
+        #         axs[1].plot(self.t,energy.flatten(),label=f'Energy {SS_to_plot[i].value}')
+        #     axs[1].set_title('Kinetic Energy Over Time')
+        #     axs[1].set_xlabel('Time [s]')
+        #     axs[1].set_ylabel('Energy [MeV]')
+        #     axs[1].legend()
         if show:
             plt.show()
 
@@ -732,6 +756,7 @@ def get_vel_deriv(vx,vy,vz,direction,delta_t,add_energy_straggling=False):
     elif direction == 'z':
         a = (Q_PROTON/MASS_PROTON_KG) * (Ez + temp_vx*By - temp_vy*Bx) - deaccel*torch.cos(po)
     a *= M_S_SQUARED__TO__CM_NS_SQUARED
+
     return a
 
 def f(state_space_vector_prev,delta_t,add_straggling : bool = False):
@@ -744,6 +769,7 @@ def f(state_space_vector_prev,delta_t,add_straggling : bool = False):
         state_space_vector_prev - shape of [batch_size,space_vector_size,1]
         delta_t - RK step
     '''
+    start = time.time()
     x = state_space_vector_prev[:,SS_VARIABLE.X.value]
     y = state_space_vector_prev[:,SS_VARIABLE.Y.value]
     z = state_space_vector_prev[:,SS_VARIABLE.Z.value]
@@ -787,6 +813,7 @@ def f(state_space_vector_prev,delta_t,add_straggling : bool = False):
     k4vy = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='y',delta_t=delta_t,add_energy_straggling=add_straggling)
     k4vz = get_vel_deriv(vx + delta_t*k3vx,vy + delta_t*k3vy,vz+ delta_t*k3vz,direction='z',delta_t=delta_t,add_energy_straggling=add_straggling)
 
+
     ##RK Final Step 
     delta_vx = (delta_t/6) * (k1vx+ 2*k2vx + 2*k3vx + k4vx)
     delta_vy = (delta_t/6) * (k1vy + 2*k2vy + 2*k3vy + k4vy)
@@ -807,6 +834,7 @@ def f(state_space_vector_prev,delta_t,add_straggling : bool = False):
 
     if add_straggling: #only used in generation not in KF
         x,y,z = add_angular_straggling(x,y,z,get_energy_from_velocities(vx,vy,vz),RK4_diff_pos)
+
 
     state_space_vector_curr = torch.cat((x.reshape(-1,1),y.reshape(-1,1),z.reshape(-1,1),vx.reshape(-1,1),vy.reshape(-1,1),vz.reshape(-1,1)),dim=1).unsqueeze(-1)
     return state_space_vector_curr
@@ -869,11 +897,12 @@ def get_deacceleration(energy_interp,add_energy_straggling,delta_pos):
         interp_stopping_acc - [m/s^2]
     '''
 
-    #Work around
+    # #Work around
     torch.set_default_device('cpu')
     interp_stopping_power = splev(energy_interp.cpu().detach(), ENERGY_TO_STOPPING_POWER_TABLE)    #MeV/(mg/cm2)
     torch.set_default_device(device.type)  
-
+    if device.type == 'cuda':
+        interp_stopping_power = torch.from_numpy(interp_stopping_power).cuda()
 
     if add_energy_straggling:
         energy_loss = torch.tensor(interp_stopping_power) * GAS_MEDIUM_DENSITY * delta_pos

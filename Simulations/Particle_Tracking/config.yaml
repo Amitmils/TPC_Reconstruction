@@ -7,50 +7,25 @@ train_set_size: 150
 CV_set_size: 250
 test_set_size: 250
 batch_size: 1
-force_batch: [] #For debug
+force_batch: [4] #For debug
 train: true
 test_mode: FW + BW
 
 #Training Scheduler
 wd: 1.0e-3
-first_phase_id: 0
+first_phase_id: 1
+spoon_feeding : 0
 training_scheduler:
   '0':
     mode: FW
     lr: 1.0e-3
-    n_epochs: 50
+    n_epochs: 20
     max_train_sequence_length: -1
   '1':
-    mode: FW
-    lr: 1.0e-4
-    n_epochs: 100
-    max_train_sequence_length: 75
-  '2':
-    mode: FW
-    lr: 1.0e-4
-    n_epochs: 100
-    max_train_sequence_length: 125
-  '3':
-    mode: FW
-    lr: 1.0e-4
-    n_epochs: 100
-    max_train_sequence_length: 175
-  '4':
-    mode: FW
-    lr: 1.0e-4
-    n_epochs: 50
-    max_train_sequence_length: 225
-  '5':
-    mode: FW
-    lr: 1.0e-6
-    n_epochs: 50
-    max_train_sequence_length: -1
-  '6':
     mode: BW
-    lr: 5.0e-4
-    n_epochs: 50
-    max_train_sequence_length: -1
-
+    lr: 1.0e-3
+    n_epochs: 10
+    max_train_sequence_length: 22
 
 
 

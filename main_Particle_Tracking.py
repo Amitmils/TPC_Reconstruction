@@ -9,14 +9,9 @@ from datetime import datetime
 from RTSNet.RTSNet_nn import RTSNetNN
 from Tools.utils import *
 from Plot import Plot_extended as Plot
-# batched model
-# from Simulations.Particle_Tracking.parameters import m1x_0, m2x_0, m, n,\
-# f, fInacc, h, hRotate, H_Rotate, H_Rotate_inv, Q_structure, R_structure
-# # not batched model (for Jacobian calculation use)
-# from Simulations.Lorenz_Atractor.parameters import Origin_f, Origin_fInacc, Origin_h, Origin_hRotate
-
 
 print("Pipeline Start")
+
 ################
 ### Get Time ###
 ################
@@ -31,7 +26,6 @@ print("Current Time =", strTime)
 ### Parameter settings ###
 ##########################
 system_config= CONFIG("Simulations\Particle_Tracking\config.yaml")
-system_config.use_cuda = False # use GPU or not
 if system_config.use_cuda:
    if torch.cuda.is_available():
       device = torch.device('cuda')
@@ -41,8 +35,9 @@ if system_config.use_cuda:
    else:
       raise Exception("No GPU found, please set args.use_cuda = False")
 else:
-    device = torch.device('cpu')
-    print("Using CPU")
+   device = torch.device('cpu')
+   torch.set_default_device('cpu')  # Set default device (optional)
+   print("Using CPU")
 
 
 ####################
@@ -77,38 +72,8 @@ print("testset size:",len(test_set))
 #######################
 sys_model = SystemModel(f, h, system_config.state_vector_size, system_config.observation_vector_size)# parameters for GT
 
-
-######################################
-### Evaluate Filters and Smoothers ###
-######################################
-### Evaluate EKF true
-# print("Evaluate EKF true")
-# [MSE_EKF_linear_arr, MSE_EKF_linear_avg, MSE_EKF_dB_avg, EKF_KG_array, EKF_out] = EKFTest(args, sys_model, test_input, test_target)
-# ### Evaluate EKF partial
-# print("Evaluate EKF partial")
-# [MSE_EKF_linear_arr_partial, MSE_EKF_linear_avg_partial, MSE_EKF_dB_avg_partial, EKF_KG_array_partial, EKF_out_partial] = EKFTest(args, sys_model_partial, test_input, test_target)
-
-# ## Evaluate RTS true
 print("Evaluate RTS true")
-# [MSE_ERTS_linear_arr, MSE_ERTS_linear_avg, MSE_ERTS_dB_avg, ERTS_out] = S_Test(args, sys_model, test_input, test_target)
-# ### Evaluate RTS partial
-# print("Evaluate RTS partial")
-# [MSE_ERTS_linear_arr_partial, MSE_ERTS_linear_avg_partial, MSE_ERTS_dB_avg_partial, ERTS_out_partial] = S_Test(args, sys_model_partial, test_input, test_target)
 
-# ### Save trajectories
-# trajfolderName = 'Smoothers' + '/'
-# DataResultName = traj_resultName[0]
-# EKF_sample = torch.reshape(EKF_out[0],[1,m,args.T_test])
-# ERTS_sample = torch.reshape(ERTS_out[0],[1,m,args.T_test])
-# PS_sample = torch.reshape(PS_out[0,:,:],[1,m,args.T_test])
-# target_sample = torch.reshape(test_target[0,:,:],[1,m,args.T_test])
-# input_sample = torch.reshape(test_input[0,:,:],[1,n,args.T_test])
-# torch.save({
-#             'EKF': EKF_sample,
-#             'ERTS': ERTS_sample,
-#             'ground_truth': target_sample,
-#             'observation': input_sample,
-#             }, trajfolderName+DataResultName)
 
 #######################
 ### Evaluate RTSNet ###
