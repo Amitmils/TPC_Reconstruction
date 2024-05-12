@@ -748,14 +748,14 @@ def get_vel_deriv(vx,vy,vz,direction,delta_t,add_energy_straggling=False):
 
     rr = torch.sqrt(vx**2 + vy**2 + vz**2) + 1e-6
     az = torch.arctan2(vy,vx)
-    po = torch.arccos(vz/rr)
+    po = torch.arccos(vz.clone()/rr.clone())
     if direction == 'x':
         a = (Q_PROTON/MASS_PROTON_KG) * (Ex + temp_vy*Bz-temp_vz*By) - deaccel*torch.sin(po)*torch.cos(az)
     elif direction == 'y':
         a = (Q_PROTON/MASS_PROTON_KG) * (Ey + temp_vz*Bx - temp_vx*Bz) - deaccel*torch.sin(po)*torch.sin(az)
     elif direction == 'z':
         a = (Q_PROTON/MASS_PROTON_KG) * (Ez + temp_vx*By - temp_vy*Bx) - deaccel*torch.cos(po)
-    a *= M_S_SQUARED__TO__CM_NS_SQUARED
+    a = a * M_S_SQUARED__TO__CM_NS_SQUARED
 
     return a
 

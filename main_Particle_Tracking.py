@@ -50,7 +50,6 @@ print(f"Data Load : {os.path.basename(system_config.Dataset_path)}")
 
 
 #Extract Relevant Data on the Trajectories
-system_config.FTT_delta_t = train_set[0].delta_t
 system_config.data_source = train_set[0].data_src
 
 

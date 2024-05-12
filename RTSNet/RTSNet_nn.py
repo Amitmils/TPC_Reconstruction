@@ -88,17 +88,15 @@ class RTSNetNN(KalmanNetNN):
     ####################################
     def InitBackward(self, filter_x):
         self.s_m1x_nexttime = filter_x
+        self.dx = torch.ones_like(filter_x)
 
     ##############################
     ### Innovation Computation ###
     ##############################
-    def S_Innovation(self, filter_x,num_prop =1):
-        temp = filter_x
-        for i in range(num_prop):
-            temp = self.f(temp,self.config.FTT_delta_t)
-        self.filter_x_prior = temp
+    def S_Innovation(self, filter_x):
+        self.filter_x_prior = self.f(filter_x,self.config.FTT_delta_t)
         # x_t+1|T - x_t+1|t (AMIT)
-        self.dx = self.s_m1x_nexttime - self.filter_x_prior
+        self.dx = (self.s_m1x_nexttime - self.filter_x_prior) 
 
     ################################
     ### Smoother Gain Estimation ###

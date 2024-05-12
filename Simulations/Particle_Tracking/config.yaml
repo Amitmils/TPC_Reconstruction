@@ -6,26 +6,32 @@ observation_vector_size: 3
 train_set_size: 150
 CV_set_size: 250
 test_set_size: 250
-batch_size: 1
-force_batch: [4] #For debug
+batch_size: 2
+force_batch: [2,6] #For debug
 train: true
 test_mode: FW + BW
 
 #Training Scheduler
 wd: 1.0e-3
 first_phase_id: 1
-spoon_feeding : 0
 training_scheduler:
   '0':
     mode: FW
     lr: 1.0e-3
+    spoon_feeding : 5
     n_epochs: 20
     max_train_sequence_length: -1
   '1':
     mode: BW
     lr: 1.0e-3
     n_epochs: 10
-    max_train_sequence_length: 22
+    spoon_feeding : 10
+    max_train_sequence_length: -1
+  # '2':
+  #   mode: BW
+  #   lr: 1.0e-3
+  #   n_epochs: 50
+  #   max_train_sequence_length: -1
 
 
 
