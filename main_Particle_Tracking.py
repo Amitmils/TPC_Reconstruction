@@ -47,11 +47,9 @@ print(f"Data Load : {os.path.basename(system_config.Dataset_path)}")
 [train_set,CV_set, test_set] =  torch.load(system_config.Dataset_path)
  
 
-
-
 #Extract Relevant Data on the Trajectories
 system_config.data_source = train_set[0].data_src
-
+system_config.FTT_delta_t = train_set[0].delta_t
 
 #We can set a smaller set in config
 system_config.train_set_size = min(len(train_set),system_config.train_set_size)
@@ -71,8 +69,6 @@ print("testset size:",len(test_set))
 #######################
 sys_model = SystemModel(f, h, system_config.state_vector_size, system_config.observation_vector_size)# parameters for GT
 
-print("Evaluate RTS true")
-
 
 #######################
 ### Evaluate RTSNet ###
@@ -83,7 +79,6 @@ print("Evaluate RTS true")
 ######################
 
 ## Build Neural Network
-print("RTSNet with full model info")
 RTSNet_model = RTSNetNN()
 RTSNet_model.NNBuild(sys_model,system_config)
 # ## Train Neural Network
@@ -91,11 +86,11 @@ RTSNet_Pipeline = Pipeline(strTime, "RTSNet", "RTSNet",system_config)
 RTSNet_Pipeline.setssModel(sys_model)
 RTSNet_Pipeline.setModel(RTSNet_model)
 print("Number of trainable parameters for RTSNet:",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
-RTSNet_Pipeline.setTrainingParams()    
+RTSNet_Pipeline.setTrainingParams()
 if system_config.train == True:
    [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set)
 ## Test Neural Network
-[MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,rtsnet_out,RunTime] = RTSNet_Pipeline.NNTest(sys_model,test_set)
+RTSNet_Pipeline.NNTest(sys_model,test_set)
 ####################################################################################
 
 if False:

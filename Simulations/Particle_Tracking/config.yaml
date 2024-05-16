@@ -6,32 +6,36 @@ observation_vector_size: 3
 train_set_size: 150
 CV_set_size: 250
 test_set_size: 250
-batch_size: 2
-force_batch: [2,6] #For debug
+batch_size: 50
+delta_t_factor : 1 # 0.01ns x Factor
+force_batch: [] #For debug
 train: true
 test_mode: FW + BW
 
 #Training Scheduler
 wd: 1.0e-3
-first_phase_id: 1
+first_phase_id: 2
 training_scheduler:
   '0':
     mode: FW
     lr: 1.0e-3
-    spoon_feeding : 5
-    n_epochs: 20
+    spoon_feeding : 10
+    n_epochs: 40
     max_train_sequence_length: -1
   '1':
     mode: BW
     lr: 1.0e-3
+    n_epochs: 40
+    loss: velocity
+    spoon_feeding : 40 
+    max_train_sequence_length: -1
+  '2':
+    mode: BW
+    lr: 1.0e-4
     n_epochs: 10
+    loss: velocity
     spoon_feeding : 10
     max_train_sequence_length: -1
-  # '2':
-  #   mode: BW
-  #   lr: 1.0e-3
-  #   n_epochs: 50
-  #   max_train_sequence_length: -1
 
 
 
@@ -46,4 +50,4 @@ output_dim_mult_RTSNet: 40
 # #Paths
 
 path_results: "Simulations/Particle_Tracking/models"
-Dataset_path: "Simulations\\Particle_Tracking\\data\\Dataset_Debug_09_05_24__18_41.pt"
+Dataset_path: "Simulations/Particle_Tracking/data/Low_Energy_Set_15_05_24__21_25.pt"

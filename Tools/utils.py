@@ -466,6 +466,7 @@ class Traj_Generator():
             self.real_traj[SS_VARIABLE.Vx.value,0,:] = v * np.sin(theta) * np.cos(phi)
             self.real_traj[SS_VARIABLE.Vy.value,0,:] = v * np.sin(theta) * np.sin(phi)
             self.real_traj[SS_VARIABLE.Vz.value,0,:] = v * np.cos(theta)
+            get_energy_from_velocities(v * np.sin(theta) * np.cos(phi),v * np.sin(theta) * np.sin(phi),v * np.cos(theta))
         self.obs_traj[:,0,:] =  self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],0,:]
 
     def get_obs_traj_from_pad(self,traj_length):
@@ -595,6 +596,43 @@ def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
         traj.y += gaussian_noise
     return traj_list
 
+def error_estimations(type,real_energy,real_theta,estimation):
+    est_data = {
+           f"MP energy {type}" : round(torch.abs(100*(estimation['init_energy']-real_energy)/real_energy).item(),2),
+           f"MP theta {type}" : round(torch.abs(100*(estimation['inital_theta']-real_theta)/real_theta).item(),2),
+           f"SP energy {type}" : round(torch.abs(100*(estimation['inital_energy_point']-real_energy)/real_energy).item(),2),
+           f"SP theta {type}" : round(torch.abs(100*(estimation['inital_theta_point']-real_theta)/real_theta).item(),2)
+        }
+    return est_data
+def estimation_summary(traj_set,output_path):
+    set_summary = list()
+    for traj_id in range(len(traj_set)):
+
+        estimations ={
+            "gen" : get_mx_0(traj_set[traj_id].generated_traj.squeeze(-1))[1],
+            "obs" : get_mx_0(traj_set[traj_id].y.squeeze(-1))[1],
+            "fw" :  get_mx_0(traj_set[traj_id].x_estimated_FW.squeeze(-1))[1],
+            "bw" : get_mx_0(traj_set[traj_id].x_estimated_BW.squeeze(-1))[1]
+        }
+        real_energy = traj_set[traj_id].init_energy
+        real_theta = traj_set[traj_id].init_teta
+        traj_data = [real_energy,real_theta]
+        traj_data = {"ID" : traj_id,
+                     "energy": real_energy,
+                     "theta" : real_theta}
+        for type,est in estimations.items():
+            traj_data = {**traj_data,**error_estimations(type,real_energy,real_theta,est)}
+            if type == 'gen':
+                est_theta = torch.arctan2(torch.sqrt(traj_set[traj_id].generated_traj[0,1]**2 + traj_set[traj_id].generated_traj[1,1]**2),traj_set[traj_id].generated_traj[2,1])
+                traj_data[f"SP theta {type}"] = round(torch.abs(100*(real_theta-est_theta)/est_theta).item(),2),
+        set_summary.append(traj_data)
+
+    df = pd.DataFrame(set_summary)
+    df.set_index('ID', inplace=True)
+
+    df.to_csv(output_path)
+
+
 def get_energy_from_brho(brho):
     '''
     Input : 
@@ -705,10 +743,10 @@ def get_energy_from_velocities(vx,vy,vz):
     Output :
         energy - [MeV]
     '''
-    velocity = torch.sqrt(vx**2 + vy**2 + vz**2) * CM_NS__TO__M_S
-    bet = velocity / C
-    gamma = torch.sqrt(1/(1-bet**2)) 
-    energy = (gamma - 1) * 931.494028
+    M_Ener = MASS_PROTON_AMU * 931.49401
+    v = torch.sqrt(vx**2 + vy**2 + vz**2)
+    energy =  torch.sqrt(convert_velocity_to_momentum(v)**2 + M_Ener**2)-M_Ener
+
     return energy 
 
 def get_velocity_from_energy(energy):
@@ -718,9 +756,11 @@ def get_velocity_from_energy(energy):
     Output :
         v - [cm/ns]
     '''
-    gamma = energy/931.494028 + 1
-    velocity = C * torch.sqrt(1-1/gamma**2) * M_S__TO__CM_NS
-    return velocity 
+    M_Ener = MASS_PROTON_AMU * 931.49401
+    # E = sqrt(p^2+ M_ener^2) - M_ener
+    p = torch.sqrt((energy + M_Ener)**2 - M_Ener**2) # MeV/c
+    v = convert_momentum_to_velocity(p)
+    return v 
 
 def get_vel_deriv(vx,vy,vz,direction,delta_t,add_energy_straggling=False):
     '''
@@ -766,7 +806,7 @@ def f(state_space_vector_prev,delta_t,add_straggling : bool = False):
         In order to add energy straggling, we need to get the distance traveled with each f1/f2/f3, therefore we also 
         calculate RK1/RK2/Rk3 step to get a estimated distance traveled.
     INPUT:
-        state_space_vector_prev - shape of [batch_size,space_vector_size,1]
+        state_space_vector_prev - shape of [batch_size,space_vector_size]
         delta_t - RK step
     '''
     start = time.time()

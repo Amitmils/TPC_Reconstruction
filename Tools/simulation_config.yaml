@@ -27,15 +27,15 @@ CoM_observations : true #if set to true, observations will be taken from a CoM o
 mode: "generate_dataset" # "generate_dataset" - generate a whole dataset // "generate_traj" - generate 1 trajectory
 
 ##Config Parameters for "generate_dataset"
-num_train_traj : 25
-num_val_traj: 5
-num_test_traj : 5
-dataset_name : "Dataset_Debug"
+num_train_traj : 50
+num_val_traj: 20
+num_test_traj : 20
+dataset_name : "Low_Energy_Set"
 output_dir : "Simulations/Particle_Tracking/data" # where to save results
 angle_energy_table_path : "Tools/Angle_Energy.txt"
 
 ##Config Parameters for "generate_traj"
-energy : 1.0519532520249 #MeV
+energy : 10.0519532520249 #MeV
 theta : 1.40713822625604 #rad
 phi : -0.644949248687716 #rad
 plot_traj: true #Flag if to plot trajectories, plots chosen trajectory one on top of the other. If this is false, disables the rests

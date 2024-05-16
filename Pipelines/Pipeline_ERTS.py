@@ -9,7 +9,7 @@ import time
 import random
 import numpy as np
 from Plot import Plot_extended as Plot
-from Tools.utils import get_mx_0,System_Mode,Trajectory_SS_Type
+from Tools.utils import get_mx_0,System_Mode,Trajectory_SS_Type,estimation_summary
 import os
 import matplotlib.pyplot as plt
 import time
@@ -26,6 +26,11 @@ class Pipeline_ERTS:
         self.PipelineName = self.folderName + "pipeline_" + self.modelName + ".pt"
         self.phase_change_epochs = [0] #for Visualization - aggregate the epochs which a phase changed
 
+        if self.config.use_cuda:
+            self.device = torch.device('cuda')
+        else:
+            self.device = torch.device('cpu')
+
     def save(self):
         torch.save(self, self.PipelineName)
 
@@ -38,15 +43,12 @@ class Pipeline_ERTS:
 
 
     def setTrainingParams(self):
-        if self.config.use_cuda:
-            self.device = torch.device('cuda')
-        else:
-            self.device = torch.device('cpu')
-        self.num_epochs = np.sum([phase_config["n_epochs"] for phase_config in self.config.training_scheduler.values()])  # Number of Training Steps
-        self.batch_size = self.config.batch_size # Number of Samples in Batch
+        self.batch_size = self.config.batch_size # Number of tracks in Batch
         self.total_num_phases = len(self.config.training_scheduler)
 
         self.current_phase = str(self.config.first_phase_id)
+        self.num_epochs = np.sum([phase_config["n_epochs"] for phase_id,phase_config in enumerate(self.config.training_scheduler.values()) if phase_id>=self.config.first_phase_id])  # Number of Training Steps
+
         if self.current_phase !="0":
             prev_phase = str(int(self.current_phase)-1)
             weights_path = os.path.join(self.config.path_results,f"best-model-weights_P{prev_phase}.pt")
@@ -60,13 +62,12 @@ class Pipeline_ERTS:
         self.TRAINING_MODE = System_Mode(self.config.training_scheduler[self.current_phase]["mode"])
         self.phase_modes = [self.TRAINING_MODE.value] #For visualization - set first mode type
         self.spoon_feeding = self.config.training_scheduler[self.current_phase]["spoon_feeding"] if "spoon_feeding" in self.config.training_scheduler[self.current_phase] else 0
+        self.loss = self.config.training_scheduler[self.current_phase]["loss"] if "loss" in self.config.training_scheduler[self.current_phase] else 'all'
         self.weightDecay = self.config.wd # L2 Weight Regularization - Weight Decay
         # self.alpha = self.config.alpha # Composition loss factor
         # MSE LOSS Function
         self.loss_fn = nn.MSELoss(reduction='mean')
-
         self.set_optimizer()
-        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min',factor=0.9, patience=20)
         if self.config.train == True:
             self.report_training_phase()
 
@@ -104,6 +105,7 @@ class Pipeline_ERTS:
         self.current_phase = str(int(self.current_phase)+1)
         self.num_epochs_in_phase = self.config.training_scheduler[self.current_phase]["n_epochs"]
         self.spoon_feeding = self.config.training_scheduler[self.current_phase]["spoon_feeding"] if "spoon_feeding" in self.config.training_scheduler[self.current_phase] else 0
+        self.loss = self.config.training_scheduler[self.current_phase]["loss"] if "loss" in self.config.training_scheduler[self.current_phase] else 'all'
         self.next_phase_change = self.next_phase_change + self.num_epochs_in_phase
         self.max_train_sequence_length = self.config.training_scheduler[self.current_phase]["max_train_sequence_length"]
         self.update_learning_rate(self.config.training_scheduler[self.current_phase]["lr"])
@@ -145,8 +147,8 @@ class Pipeline_ERTS:
         for ti in range(0, self.num_epochs):
             start = time.time()
             if ti == self.next_phase_change:
-                #save best model of Phase
-                torch.save(best_model, os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
+                # #save best model of Phase
+                # torch.save(best_model, os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
                 self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
                 self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
                 self.MSE_cv_dB_opt = 1000
@@ -212,9 +214,9 @@ class Pipeline_ERTS:
                     self.MSE_cv_idx_opt = ti
                     best_model = self.model.state_dict().copy()
                     
-                    # torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
-                    # if int(self.current_phase) == self.total_num_phases-1:
-                    #     torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt")) 
+                    torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_P{self.current_phase}.pt"))
+                    if int(self.current_phase) == self.total_num_phases-1:
+                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt")) 
 
             # cv_set[0].x_estimated_BW = x_out_cv[0].clone().detach()
             # cv_set[0].x_estimated_FW = x_out_cv_forward[0].clone().detach()
@@ -223,6 +225,7 @@ class Pipeline_ERTS:
             ########################
             ### Training Summary ###
             ########################
+
             print(f"Time : {time.time()-start}")
             print(f"P{self.current_phase}",ti, "MSE Training :", self.MSE_train_dB_epoch[ti], "[dB]", "MSE Validation :", self.MSE_cv_dB_epoch[ti],
                   "[dB]")
@@ -234,8 +237,10 @@ class Pipeline_ERTS:
 
             print("Optimal idx:", self.MSE_cv_idx_opt, "Optimal :", self.MSE_cv_dB_opt, "[dB]")
 
+        estimation_summary(train_set,os.path.join("Simulations\Particle_Tracking\data",f"{os.path.basename(self.config.Dataset_path)}_LastTrainBatch_summary.csv"))
+        estimation_summary(cv_set,os.path.join("Simulations\Particle_Tracking\data",f"{os.path.basename(self.config.Dataset_path)}_CV_summary.csv"))
         torch.save(best_model, os.path.join(self.config.path_results,f"best-model-weights_FINAL.pt"))
-        self.plot_training_summary()
+        # self.plot_training_summary() #TODO Why doesnt it work?
         return [self.MSE_cv_linear_epoch, self.MSE_cv_dB_epoch, self.MSE_train_linear_epoch, self.MSE_train_dB_epoch]
 
     def plot_training_summary(self):
@@ -262,32 +267,16 @@ class Pipeline_ERTS:
         plt.show()
 
     def NNTest(self, SysModel, test_set,load_model_path=None):
-        
+
         self.TEST_MODE = System_Mode(self.config.test_mode)
         self.test_set_size = self.model.batch_size = len(test_set)
 
-        traj_lengths_in_test = torch.tensor([traj.traj_length for traj in test_set])
-        max_traj_length_in_test = torch.max(traj_lengths_in_test)
-
-        x_out_test_forward         = torch.zeros([self.test_set_size, SysModel.space_state_size, max_traj_length_in_test])
-        x_out_test_forward_flipped = torch.zeros([self.test_set_size, SysModel.space_state_size, max_traj_length_in_test])
-        x_out_test                 = torch.zeros([self.test_set_size, SysModel.space_state_size,max_traj_length_in_test])
-        x_out_test_flipped         = torch.zeros([self.test_set_size, SysModel.space_state_size,max_traj_length_in_test])
-        test_target                = torch.zeros([self.test_set_size, SysModel.space_state_size,max_traj_length_in_test])
-        y_test                     = torch.zeros([self.test_set_size, SysModel.observation_vector_size,max_traj_length_in_test])
-        mask_test                  = torch.zeros([self.test_set_size, SysModel.space_state_size, max_traj_length_in_test])
-        
-        self.MSE_test_linear_arr = torch.zeros([self.test_set_size])
-
-        self.MSE_test_linear_arr = torch.zeros([self.test_set_size])
-
-        # MSE LOSS Function
-        loss_fn = nn.MSELoss(reduction='mean')
 
         if load_model_path is not None:
             print(f"Loading Model from path {load_model_path}")
             model_weights = torch.load(load_model_path, map_location=self.device) 
         else:
+            print(f"Loading Model best-model-weights_FINAL")
             model_weights = torch.load(os.path.join(self.config.path_results,f'best-model-weights_FINAL.pt'), map_location=self.device) 
         # Set the loaded weights to the model
         self.model.load_state_dict(model_weights)
@@ -297,80 +286,31 @@ class Pipeline_ERTS:
         # Init Hidden State
         self.model.init_hidden()
         torch.no_grad()
+        with torch.no_grad():
+            start = time.time()
+            self.MSE_test_linear_avg = self.calculate_loss(test_set,SysModel,0,"Test")
+            end = time.time()
+            t = end - start
 
-        start = time.time()
-        M1_0 = []
-        for ii,traj in enumerate(test_set):
-            y_test[ii,:,:traj.traj_length]      = traj.y[:,:traj.traj_length]
-            test_target[ii,:,:traj.traj_length] = traj.x_real[:,:traj.traj_length]
-            mask_test[ii,:,:traj.traj_length]   = 1
-            m1_0_real,para_real = get_mx_0(test_set[ii].x_real)
-            m1_0_noisy,para_noisy= get_mx_0(test_set[ii].y,forced_phi=para_real['initial_phi'])
-            M1_0.append(m1_0_noisy.unsqueeze(0))
-
-        M1_0 = torch.cat(M1_0,dim=0)
-        x_out_test_forward[:, :, 0] = M1_0
-        self.model.InitSequence(M1_0.unsqueeze(-1),max_traj_length_in_test)
-
-
-        # Forward Computation
-        for t in range(0, max_traj_length_in_test):
-            x_out_test_forward[:, :, t] = torch.squeeze(self.model(yt = torch.unsqueeze(y_test[:, :, t],2)))
-
-        if self.TEST_MODE !=System_Mode.FW_ONLY:
-            # Flip the order (this is needed because each trajectoy has a different length)
-            for id,x_out_FW in enumerate(x_out_test_forward):
-                x_out_test_forward_flipped[id,:,:traj_lengths_in_test[id]] = torch.flip(x_out_FW[:,:traj_lengths_in_test[id]],dims=[1])
-
-            x_out_test_flipped[:,:,0] = x_out_test_forward_flipped[:,:,0]
-            self.model.InitBackward(torch.unsqueeze(x_out_test_flipped[:, :, 0],2))
-            x_out_test_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_test_forward_flipped[:, :, 1],2),
-                                                                filter_x_nexttime = torch.unsqueeze(x_out_test_forward_flipped[:, :, 0],2)))  
-
-            # Backward Computation; index k happens after k+1. 
-            # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
-            for k in range(2,max_traj_length_in_test):
-                x_out_test_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_test_forward_flipped[:, :, k],2), 
-                                                                    filter_x_nexttime = torch.unsqueeze(x_out_test_forward_flipped[:, :, k-1],2),
-                                                                    smoother_x_tplus2 = torch.unsqueeze(x_out_test_flipped[:, :, k-2],2)))
-
-            # Flip back to original order
-            for id,x_out_flipped in enumerate(x_out_test_flipped):
-                x_out_test[id,:,:traj_lengths_in_test[id]] = torch.flip(x_out_flipped[:,:traj_lengths_in_test[id]],dims=[1])
-
-        test_set[0].x_estimated_FW = x_out_test_forward[0,:,:].detach()
-        test_set[0].x_estimated_BW = x_out_test[0,:,:].detach()
-        test_set[0].traj_plots([Trajectory_SS_Type.GTT,Trajectory_SS_Type.OT,Trajectory_SS_Type.Estimated_FW])
-
-        end = time.time()
-        t = end - start
-
-        # MSE loss
-        for j in range(self.test_set_size ):
-            if self.TRAINING_MODE ==System_Mode.FW_ONLY:
-                self.MSE_test_linear_arr[j] = loss_fn(x_out_test_forward[j,:,:] * mask_test[j,:,:], test_target[j,:,:]).item()
-            else:
-                self.MSE_test_linear_arr[j] = loss_fn(x_out_test[j,:,:] * mask_test[j,:,:], test_target[j,:,:]).item()
-        
         # Average
-        self.MSE_test_linear_avg = torch.mean(self.MSE_test_linear_arr)
         self.MSE_test_dB_avg = 10 * torch.log10(self.MSE_test_linear_avg)
 
         # Standard deviation
-        self.MSE_test_linear_std = torch.std(self.MSE_test_linear_arr, unbiased=True)
+        # self.MSE_test_linear_std = torch.std(self.MSE_test_linear_arr, unbiased=True)
 
         # Confidence interval
-        self.test_std_dB = 10 * torch.log10(self.MSE_test_linear_std + self.MSE_test_linear_avg) - self.MSE_test_dB_avg
+        # self.test_std_dB = 10 * torch.log10(self.MSE_test_linear_std + self.MSE_test_linear_avg) - self.MSE_test_dB_avg
 
         # Print MSE and std
         str = self.modelName + "-" + "MSE Test:"
         print(str, self.MSE_test_dB_avg, "[dB]")
-        str = self.modelName + "-" + "STD Test:"
-        print(str, self.test_std_dB, "[dB]")
+        # str = self.modelName + "-" + "STD Test:"
+        # print(str, self.test_std_dB, "[dB]")
         # Print Run Time
         print("Inference Time:", t)
+        estimation_summary(test_set,os.path.join("Simulations\Particle_Tracking\data",f"{os.path.basename(self.config.Dataset_path)}_Test_summary.csv"))
 
-        return [self.MSE_test_linear_arr, self.MSE_test_linear_avg, self.MSE_test_dB_avg, x_out_test, t]
+        return [self.MSE_test_linear_avg, self.MSE_test_dB_avg, t]
 
     def PlotTrain_RTS(self, MSE_KF_linear_arr, MSE_KF_dB_avg, MSE_RTS_linear_arr, MSE_RTS_dB_avg):
     
@@ -386,8 +326,9 @@ class Pipeline_ERTS:
             self.model.batch_size = len(traj_batch)
             # Init Hidden State
             self.model.init_hidden()
+            self.config.delta_t = torch.ones([self.model.batch_size]) * self.config.FTT_delta_t #forward pass has the finest Delta
     
-            force_max_length = torch.inf if self.max_train_sequence_length == -1 else self.max_train_sequence_length #Used to limit BW loss
+            force_max_length = torch.inf if batch_type == "Test" or self.max_train_sequence_length == -1 else self.max_train_sequence_length #Used to limit BW loss
             clustered_traj_lengths_in_batch = torch.tensor([traj.x_real.shape[1] for traj in traj_batch])
             generated_traj_lengths_in_batch = torch.tensor([traj.generated_traj.shape[1] for traj in traj_batch])
             max_clustered_traj_length_in_batch = torch.max(clustered_traj_lengths_in_batch)
@@ -401,9 +342,7 @@ class Pipeline_ERTS:
             batch_target = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch])
             fw_output_place_holder = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch])
             x_out_forward_batch = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch])
-            x_out_forward_batch_flipped = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch])
             x_out_batch = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch])
-            x_out_batch_flipped = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch])
             est_BW_mask = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.bool)
             FTT_BW_mask = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.bool)
             generated_traj_length_mask = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.bool)#zeroify values that are after the traj length
@@ -418,7 +357,7 @@ class Pipeline_ERTS:
                 batch_y[ii,:,:clustered_traj_lengths_in_batch[ii]] = traj_batch[ii].y[:3,:clustered_traj_lengths_in_batch[ii]].squeeze(-1)
                 batch_target[ii,:,:generated_traj_lengths_in_batch[ii]] = traj_batch[ii].generated_traj[:,:generated_traj_lengths_in_batch[ii]].squeeze(-1)
                 generated_traj_length_mask[ii,:,:generated_traj_lengths_in_batch[ii]] = 1
-                clustered_in_generated_mask[ii,:,traj_batch[ii].t[1:]] = 1 #The first t is M1_0, normalize such that its 0 and remove since we dont estimate w/ KNET
+                clustered_in_generated_mask[ii,:,traj_batch[ii].t[1:]] = 1 #The first t is M1_0,
                 m1_0_noisy,est_para = get_mx_0(traj_batch[ii].y.squeeze(-1))
                 M1_0.append(m1_0_noisy.unsqueeze(0))
                 ii += 1
@@ -428,7 +367,6 @@ class Pipeline_ERTS:
             self.model.InitSequence(M1_0.unsqueeze(-1),max_clustered_traj_length_in_batch)
 
             # Forward Computation
-            self.config.FTT_delta_t = traj_batch[0].delta_t #TODO rewrite 
             fine_step_for_each_trajID_in_batch = torch.zeros(len(traj_batch),dtype=torch.int)
             for t in range(1,max_clustered_traj_length_in_batch):
                 if not(t%10):
@@ -446,11 +384,11 @@ class Pipeline_ERTS:
 
                     # perform prediction to relevant trajs
                     with torch.no_grad():
-                        next_ss_via_prediction_only[traj_id_in_batch_that_need_prediction] = self.model.f(x_out_forward_batch[traj_id_in_batch_that_need_prediction,:,fine_step_for_each_trajID_in_batch[traj_id_in_batch_that_need_prediction]],self.config.FTT_delta_t).squeeze(-1)
+                        next_ss_via_prediction_only[traj_id_in_batch_that_need_prediction] = self.model.f(x_out_forward_batch[traj_id_in_batch_that_need_prediction,:,fine_step_for_each_trajID_in_batch[traj_id_in_batch_that_need_prediction]],self.config.delta_t[traj_id_in_batch_that_need_prediction]).squeeze(-1)
 
                     # get distance of predictions to next observations
                     new_distances_to_obs[traj_id_in_batch_that_need_prediction] = torch.sqrt(torch.sum((next_ss_via_prediction_only[traj_id_in_batch_that_need_prediction,:3] - batch_y[traj_id_in_batch_that_need_prediction,:3,t])**2,dim=1))
-
+                    # print(f"Est : {next_ss_via_prediction_only[traj_id_in_batch_that_need_prediction][0,:3]} , Obs {batch_y[traj_id_in_batch_that_need_prediction,:3,t]} , Dist {new_distances_to_obs}")
                     # Mark which trajs are still getting closer to their obs and which have passed it.
                     # If it doesnt need predicition it will get a False on "getting_closer" and we also add a False in "getting farther"
                     trajs_getting_closer = new_distances_to_obs < distance_from_obs_for_each_trajID_in_batch
@@ -462,9 +400,13 @@ class Pipeline_ERTS:
                     # Update SS in forward batch
                     # Increment fine step
                     # Update new distance from obs
-                    x_out_forward_batch[trajs_getting_closer,:,fine_step_for_each_trajID_in_batch[trajs_getting_closer]+1] = next_ss_via_prediction_only[trajs_getting_closer]
-                    fine_step_for_each_trajID_in_batch[trajs_getting_closer]+=1
+                    time_stamp_to_update = torch.min(fine_step_for_each_trajID_in_batch[trajs_getting_closer]+1,max_generated_traj_length_in_batch-1) # against overflow
+                    x_out_forward_batch[trajs_getting_closer,:,time_stamp_to_update] = next_ss_via_prediction_only[trajs_getting_closer]
+                    fine_step_for_each_trajID_in_batch[trajs_getting_closer]= torch.min(fine_step_for_each_trajID_in_batch[trajs_getting_closer] + 1,max_generated_traj_length_in_batch-1) #against overflow
                     distance_from_obs_for_each_trajID_in_batch[trajs_getting_closer] = new_distances_to_obs[trajs_getting_closer]
+
+                    if any(time_stamp_to_update == max_generated_traj_length_in_batch):
+                        print("Overflow in prediction!")
 
                     ###############################################
                     ## For those who we are getting farther away ##
@@ -486,60 +428,71 @@ class Pipeline_ERTS:
             if self.TRAINING_MODE != System_Mode.FW_ONLY:
                 batch_ids = torch.arange(len(traj_batch))
                 len_generated_hit_till_last_obs_hit = fine_step_for_each_trajID_in_batch + 1 #For every traj, closest gen hit id for the LAST obs hit
-                # Flip the order (this is needed because each trajectoy has a different length)
+                relevant_ids_in_est_list = torch.zeros_like(updates_step_map) - 1
+                est_BW_mask_loss = update_step_in_fw_mask.clone()
+                FTT_BW_mask_loss = clustered_in_generated_mask.clone()
+
                 for id_in_batch,x_out_FW in enumerate(x_out_forward_batch):
+                    #for spoon feeding mode
                     updates_step_map[id_in_batch,:len(update_step_in_fw_mask[id_in_batch,0,:].nonzero())] = torch.flip(update_step_in_fw_mask[id_in_batch,0,:].nonzero(),dims=[0]).squeeze()
-                    updates_step_map[id_in_batch,len(update_step_in_fw_mask[id_in_batch,0,:].nonzero())] = 0
-                    min_length = min(min(force_max_length,len_generated_hit_till_last_obs_hit[id_in_batch]),traj_batch[id_in_batch].t[-1]-traj_batch[id_in_batch].t[0])
-                    est_BW_mask[id_in_batch,:,:min_length] = 1
-                    FTT_BW_mask[id_in_batch,:,traj_batch[id_in_batch].t[0]:traj_batch[id_in_batch].t[0] + min_length] = 1
+                    updates_step_map[id_in_batch,len(update_step_in_fw_mask[id_in_batch,0,:].nonzero())] = 0 #TODO combine both spoon feeding with normal and have only 1 mapping
+
+                    #Velocity Loss Mask
+                    if self.loss == 'velocity':
+                        FTT_BW_mask_loss[id_in_batch] = False
+                        FTT_BW_mask_loss[id_in_batch,-3:,traj_batch[id_in_batch].t[0]] = True 
+                        est_BW_mask_loss[id_in_batch] = False
+                        est_BW_mask_loss[id_in_batch,-3:,0] = True
+                    elif self.loss == 'all':
+                        # In BW, we update first point as well, add it to the loss mask
+                        FTT_BW_mask_loss[id_in_batch,:,traj_batch[id_in_batch].t[0]] = True 
+                        est_BW_mask_loss[id_in_batch,:,0] = True
+
+                    #TODO organize is s.t. this will be in est_BW_mask_loss
+                    relevant_ids_in_est = torch.arange(0,len_generated_hit_till_last_obs_hit[id_in_batch],self.config.delta_t_factor)
+                    relevant_ids_in_FTT = torch.arange(traj_batch[id_in_batch].t[0],traj_batch[id_in_batch].t[-1],self.config.delta_t_factor)
+                    relevant_ids_in_est_list[id_in_batch,-len(relevant_ids_in_est):] = relevant_ids_in_est
+                    min_length = min(min(force_max_length,len(relevant_ids_in_FTT)),len(relevant_ids_in_est))
+                    est_BW_mask[id_in_batch,:,relevant_ids_in_est[:min_length]] = 1 
+                    FTT_BW_mask[id_in_batch,:,relevant_ids_in_FTT[:min_length]] = 1
                     generated_traj_length_mask[id_in_batch,:,len_generated_hit_till_last_obs_hit[id_in_batch]:] = 0 #nullify all hits after the hit thats closest to last observation
-                    x_out_forward_batch_flipped[id_in_batch,:,:len_generated_hit_till_last_obs_hit[id_in_batch]] = torch.flip(x_out_FW[:,:len_generated_hit_till_last_obs_hit[id_in_batch]],dims=[1])
 
                 if epoch_num < self.spoon_feeding:
-                    self.config.FTT_delta_t = traj_batch[0].delta_t * 20 #TODO rewrite 
+                    # assert False,"Fix the delta_t"
                     x_out_batch[batch_ids,:,updates_step_map[:,0]] = x_out_forward_batch[batch_ids,:,updates_step_map[:,0]] #It was flipped such that 0 in the flipped is updates_step_map[:,0]
                     self.model.InitBackward(torch.unsqueeze(x_out_batch[batch_ids, :, updates_step_map[:,0]],2))
+                    
+                    self.config.delta_t =  (updates_step_map[:,0] - updates_step_map[:,1]) * self.config.FTT_delta_t
                     x_out_batch[batch_ids, :, updates_step_map[:,1]] = self.model(filter_x =x_out_forward_batch[batch_ids, :, updates_step_map[:,1]].unsqueeze(2),
                                                                                     filter_x_nexttime = x_out_batch[batch_ids, :, updates_step_map[:,0]].unsqueeze(2)).squeeze(2)
-                    # print(f"1 : dx : {torch.norm(self.model.dx)} , gain {torch.norm(self.model.SGain)}")
-
                     for k in range(2,updates_step_map.shape[1]):
                         end_of_traj = updates_step_map[:,k] == -1
 
                         if torch.all(end_of_traj):
                             break
+                        self.config.delta_t =  (updates_step_map[:,k-1] - updates_step_map[:,k]) * self.config.FTT_delta_t
                         x_out_batch[~end_of_traj, :, updates_step_map[~end_of_traj,k]] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_forward_batch[batch_ids, :, updates_step_map[:,k]],2), 
                                                                                         filter_x_nexttime = torch.unsqueeze(x_out_batch[batch_ids, :, updates_step_map[:,k-1]],2),
                                                                                         smoother_x_tplus2 = torch.unsqueeze(x_out_batch[batch_ids, :, updates_step_map[:,k-2]],2)),2)[~end_of_traj,:]
-                        # print(f"{k} : dx : {torch.norm(self.model.dx)} , gain {torch.norm(self.model.SGain)}")
                 else:
-                    #TODO Remove Flipped - Not Efficient
-                    x_out_batch_flipped[:,:,0] = x_out_forward_batch_flipped[:,:,0]
-                    self.model.InitBackward(torch.unsqueeze(x_out_batch_flipped[:, :, 0],2))
-                    x_out_batch_flipped[:, :, 1] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_forward_batch_flipped[:, :, 1],2),
-                                                                                    filter_x_nexttime = torch.unsqueeze(x_out_batch_flipped[:, :, 0],2)))
-                    dx_vector = torch.zeros([self.batch_size,x_out_batch_flipped.shape[2]])
-                    dx_vector[:,1] = torch.norm(self.model.dx)
-                    # print(f"1 : dx : {torch.norm(self.model.dx)} , gain {torch.norm(self.model.SGain)}")
-                    #  index k happens after k+1. 
-                    # E.g., if the trajectory is of length 100. time stamp 100 is at k=0 , time stamp 99 is at k=1. k = 100 - t
-                    for k in range(2,max(len_generated_hit_till_last_obs_hit)):
-                        x_out_batch_flipped[:, :, k] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_forward_batch_flipped[:, :, k],2), 
-                                                                                        filter_x_nexttime = torch.unsqueeze(x_out_batch_flipped[:, :, k - 1],2),
-                                                                                        smoother_x_tplus2 = torch.unsqueeze(x_out_batch_flipped[:, :, k-2],2)))
-                        dx_vector[:,k] = torch.norm(self.model.dx)                                                
-                        # print(f"{k} : dx : {torch.norm(self.model.dx)} , gain {torch.norm(self.model.SGain)}")
-                        
-                    # Flip back to original order
-                    for id_in_batch,x_out_flipped in enumerate(x_out_batch_flipped):
-                        x_out_batch[id_in_batch,:,:len_generated_hit_till_last_obs_hit[id_in_batch]] = torch.flip(x_out_flipped[:,:len_generated_hit_till_last_obs_hit[id_in_batch]],dims=[1])
 
-            traj_batch[0].x_estimated_BW = x_out_batch[0].clone().detach()
-            traj_batch[0].x_estimated_FW = x_out_forward_batch[0].clone().detach()
-            # train_batch[0].traj_plots([Trajectory_SS_Type.Estimated_BW,Trajectory_SS_Type.Estimated_FW,Trajectory_SS_Type.Real])
+                    self.config.delta_t = self.config.delta_t_factor * self.config.FTT_delta_t
 
-            #Compute train loss
+                    x_out_batch[batch_ids,:,relevant_ids_in_est_list[:,-1]] = x_out_forward_batch[batch_ids,:,relevant_ids_in_est_list[:,-1]]
+                    self.model.InitBackward(torch.unsqueeze(x_out_forward_batch[batch_ids,:,relevant_ids_in_est_list[:,-1]],2))
+                    x_out_batch[batch_ids, :, relevant_ids_in_est_list[:,-2]] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_forward_batch[batch_ids, :, relevant_ids_in_est_list[:,-2]],2),
+                                                                                    filter_x_nexttime = torch.unsqueeze(x_out_batch[batch_ids, :, relevant_ids_in_est_list[:,-1]],2)))
+
+                    for k in range(3, 1 + max(torch.ceil(len_generated_hit_till_last_obs_hit/self.config.delta_t_factor).to(torch.int))):
+                        end_of_traj = relevant_ids_in_est_list[:,-k] == -1
+
+                        if torch.all(end_of_traj):
+                            break
+                        x_out_batch[~end_of_traj, :,relevant_ids_in_est_list[~end_of_traj,-k]] = self.model(filter_x = torch.unsqueeze(x_out_forward_batch[batch_ids, :, relevant_ids_in_est_list[:,-k]],2), 
+                                                                                        filter_x_nexttime = torch.unsqueeze(x_out_batch[batch_ids, :, relevant_ids_in_est_list[:,-k + 1]],2),
+                                                                                        smoother_x_tplus2 = torch.unsqueeze(x_out_batch[batch_ids, :, relevant_ids_in_est_list[:,-k + 2]],2))[~end_of_traj,:].squeeze(2)
+
+            #Compute  loss
             if self.TRAINING_MODE == System_Mode.FW_ONLY:
                 if epoch_num < self.spoon_feeding: #Till the KNET warms up a bit
                     MSE_batch_linear_LOSS = self.loss_fn(fw_output_place_holder[update_step_in_fw_mask],batch_target[clustered_in_generated_mask])
@@ -547,15 +500,22 @@ class Pipeline_ERTS:
                     MSE_batch_linear_LOSS = self.loss_fn(x_out_forward_batch[update_step_in_fw_mask],batch_target[clustered_in_generated_mask])
             else:
                 if epoch_num<self.spoon_feeding :
-                    MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[update_step_in_fw_mask], batch_target[clustered_in_generated_mask])
+                    MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])
                 else:
                     MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask], batch_target[FTT_BW_mask])
 
-                for i in range(self.batch_size):
-                    if epoch_num < self.spoon_feeding:
-                        print(self.loss_fn(x_out_batch[i,update_step_in_fw_mask[i]],batch_target[i,clustered_in_generated_mask[i]]))
-                    else:
-                        print(self.loss_fn(x_out_batch[i,est_BW_mask[i]],batch_target[i,FTT_BW_mask[i]]))
+            for traj_id in range(len(traj_batch)):
+                non_zero_ids_in_FW = update_step_in_fw_mask[traj_id,0,:].nonzero() #Only saves the ids which there was an update step
+                non_zero_ids_in_BW = x_out_batch[traj_id,0,:].nonzero() #filter out all the zeros
+                traj_batch[traj_id].x_estimated_FW = x_out_forward_batch[traj_id,:,non_zero_ids_in_FW].detach()
+                traj_batch[traj_id].x_estimated_BW = x_out_batch[traj_id,:,non_zero_ids_in_BW].detach()
 
+
+            # z = 0
+            # print(f"gen : {get_mx_0(traj_batch[z].generated_traj.squeeze(-1))[1]}\n",
+            #       f"y : {get_mx_0(traj_batch[z].y.squeeze(-1))[1]}\n",
+            #       f"fw {get_mx_0(traj_batch[z].x_estimated_FW.squeeze(-1))[1]}\n",
+            #       f"bw {get_mx_0(traj_batch[z].x_estimated_BW.squeeze(-1))[1]}\n"
+            #       f" energy : {traj_batch[z].init_energy}")
             return MSE_batch_linear_LOSS
     

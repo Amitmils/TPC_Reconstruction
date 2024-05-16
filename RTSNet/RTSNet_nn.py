@@ -94,7 +94,7 @@ class RTSNetNN(KalmanNetNN):
     ### Innovation Computation ###
     ##############################
     def S_Innovation(self, filter_x):
-        self.filter_x_prior = self.f(filter_x,self.config.FTT_delta_t)
+        self.filter_x_prior = self.f(filter_x.squeeze(-1),self.config.delta_t)
         # x_t+1|T - x_t+1|t (AMIT)
         self.dx = (self.s_m1x_nexttime - self.filter_x_prior) 
 

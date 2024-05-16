@@ -137,10 +137,10 @@ class KalmanNetNN(torch.nn.Module):
     def step_prior(self,xt_minus_1 = None):
         # Predict the 1-st moment of x
         if xt_minus_1 is None:
-            self.m1x_prior = self.f(self.m1x_posterior,self.config.FTT_delta_t)
+            self.m1x_prior = self.f(self.m1x_posterior.squeeze(-1),self.config.delta_t)
         else:
             #in this case, our last posterior is not t-1 (data imputation mode)
-            self.m1x_prior = self.f(xt_minus_1,self.config.FTT_delta_t)
+            self.m1x_prior = self.f(xt_minus_1.squeeze(-1),self.config.delta_t)
             # print(f"t-1 : {xt_minus_1} , t : {self.m1x_prior}")
 
 
