@@ -4,7 +4,6 @@ script_dir = Path(__file__).resolve().parent
 grandparent_dir = script_dir.parent.parent
 if str(grandparent_dir) not in sys.path:
     sys.path.append(str(grandparent_dir))
-
 import numpy as np
 from scipy.interpolate import splrep, splev
 from scipy import stats

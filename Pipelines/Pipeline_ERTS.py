@@ -473,7 +473,7 @@ class Pipeline_ERTS:
                 else:
                     MSE_batch_linear_LOSS = self.loss_fn(x_out_forward_batch[update_step_in_fw_mask],batch_target[clustered_in_generated_mask])
             else:
-                MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])
+                MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss & ~update_step_in_fw_mask], batch_target[FTT_BW_mask_loss & ~clustered_in_generated_mask])
 
 
             for traj_id in range(len(traj_batch)):
@@ -482,5 +482,17 @@ class Pipeline_ERTS:
                 traj_batch[traj_id].x_estimated_FW = x_out_forward_batch[traj_id,:,non_zero_ids_in_FW].detach()
                 traj_batch[traj_id].x_estimated_BW = x_out_batch[traj_id,:,non_zero_ids_in_BW].detach()
 
+            # plt.figure()
+            # plt.scatter(traj_batch[0].x_estimated_FW[0,:,0],traj_batch[0].x_estimated_FW[1,:,0],s=15)
+            # plt.scatter(x_out_forward_batch[0,0,:].detach(),x_out_forward_batch[0,1,:].detach(),s=3)
+            # plt.title("FW #1")
+            # plt.figure()
+            # plt.scatter(traj_batch[0].x_estimated_BW[0,:,0],traj_batch[0].x_estimated_BW[1,:,0],s=3)
+            # plt.title("BW")
+            # plt.figure()
+            # # plt.scatter(traj_batch[0].generated_traj[0].squeeze(),traj_batch[0].generated_traj[1].squeeze(),s=5)
+            # plt.scatter(traj_batch[0].generated_traj[0,FTT_BW_mask_loss[0,0,:].nonzero()].squeeze(),traj_batch[0].generated_traj[1,FTT_BW_mask_loss[0,0,:].nonzero()].squeeze(),s=3)
+            # plt.title("FTT")
+            # plt.show()
             return MSE_batch_linear_LOSS
     

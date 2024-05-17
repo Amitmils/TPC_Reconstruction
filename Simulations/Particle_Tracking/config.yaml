@@ -7,8 +7,8 @@ train_set_size: 1000
 CV_set_size: 250
 test_set_size: 250
 batch_size: 50
-interpolation_points_to_add : 1 # number of points to add between every 2 clusters for backward pass
-force_batch: [10] #For debug
+interpolation_points_to_add : 0 # number of points to add between every 2 clusters for backward pass
+force_batch: [] #For debug
 train: true
 test_mode: FW + BW
 
@@ -24,18 +24,26 @@ training_scheduler:
   '1':
     mode: FW
     lr: 1.0e-3
-    spoon_feeding : 0
     n_epochs: 30
   '2':
     mode: BW
     lr: 1.0e-3
     n_epochs: 25
-    # loss: velocity
+    loss: velocity
   '3':
     mode: BW
     lr: 5.0e-4
     n_epochs: 20
-    # loss: velocity
+    loss: velocity
+
+
+################
+## loss types ##
+################
+# all (default) - loss between all of the state vectors
+# velocity - loss only on the velocities of the first state vector
+# interpolation - loss only on the added interpolated space state vectors
+
 
 
 

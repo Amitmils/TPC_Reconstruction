@@ -1,15 +1,16 @@
+from pathlib import Path
+import sys
+script_dir = Path(__file__).resolve().parent
+if str(script_dir) not in sys.path:
+    sys.path.append(str(script_dir))
 import torch
 from Simulations.Extended_sysmdl import SystemModel
 import os
-
 from Pipelines.Pipeline_ERTS import Pipeline_ERTS as Pipeline
 from Pipelines.Pipeline_concat_models import Pipeline_twoRTSNets
-
 from datetime import datetime
-
 from RTSNet.RTSNet_nn import RTSNetNN
 from Tools.utils import *
-from Plot import Plot_extended as Plot
 
 print("Pipeline Start")
 
