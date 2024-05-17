@@ -1,7 +1,6 @@
 import torch
 from Simulations.Extended_sysmdl import SystemModel
 import os
-os.chdir(r'C:\Users\owner\Documents\Repos\TPC_Reconstruction') ## How to make this as the default?
 
 from Pipelines.Pipeline_ERTS import Pipeline_ERTS as Pipeline
 from Pipelines.Pipeline_concat_models import Pipeline_twoRTSNets
@@ -27,7 +26,7 @@ print("Current Time =", strTime)
 ##########################
 ### Parameter settings ###
 ##########################
-system_config= CONFIG("Simulations\Particle_Tracking\config.yaml")
+system_config= CONFIG("Simulations/Particle_Tracking/config.yaml")
 if system_config.use_cuda:
    if torch.cuda.is_available():
       device = torch.device('cuda')

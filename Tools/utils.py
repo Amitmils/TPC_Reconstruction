@@ -1,3 +1,10 @@
+from pathlib import Path
+import sys
+script_dir = Path(__file__).resolve().parent
+grandparent_dir = script_dir.parent.parent
+if str(grandparent_dir) not in sys.path:
+    sys.path.append(str(grandparent_dir))
+
 import numpy as np
 from scipy.interpolate import splrep, splev
 from scipy import stats
@@ -16,8 +23,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
 import time
-# os.chdir(r'C:\Users\owner\Documents\Repos\TPC_Reconstruction') ## How to make this as the default?
-
 
 # if torch.cuda.is_available():
 #     device = torch.device('cuda')
@@ -75,12 +80,12 @@ class CONFIG():
         return data
 
 
-simulation_config= CONFIG("Tools\\simulation_config.yaml")
+simulation_config= CONFIG("Tools/simulation_config.yaml")
 if __name__ == "__main__":
         device = torch.device('cpu')
         print("Using CPU")
 else:
-    system_config= CONFIG("Simulations\Particle_Tracking\config.yaml")
+    system_config= CONFIG("Simulations/Particle_Tracking/config.yaml")
     if system_config.use_cuda:
         if torch.cuda.is_available():
             device = torch.device('cuda')
