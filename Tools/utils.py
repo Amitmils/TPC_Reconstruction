@@ -16,6 +16,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
 import time
+# os.chdir(r'C:\Users\owner\Documents\Repos\TPC_Reconstruction') ## How to make this as the default?
 
 
 # if torch.cuda.is_available():
@@ -74,7 +75,7 @@ class CONFIG():
         return data
 
 
-simulation_config= CONFIG("Tools/simulation_config.yaml")
+simulation_config= CONFIG("Tools\\simulation_config.yaml")
 if __name__ == "__main__":
         device = torch.device('cpu')
         print("Using CPU")
@@ -961,6 +962,9 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
 
     ## Get Angle-Energy
     data = np.loadtxt(simulation_config.angle_energy_table_path)
+    relevant_indices = np.arange(0,data.shape[0],simulation_config.sub_sample_rate_data)
+    data = data[relevant_indices]
+
     theta = np.radians(data[:, 0]) 
     energy = data[:, 1]  #MeV
     np.random.shuffle(permutation :=np.arange(1, len(energy)))
@@ -969,14 +973,15 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
     phi = np.random.uniform(-np.pi, np.pi,len(theta))
 
     generator = Traj_Generator()
-    Dataset = []
+    training_set = list()
+    CV_set = list()
+    test_set = list()
     traj_meta_data = {"ID": [],"energy":[],"est_energy":[],'energy_error_%':[],"est_energy_point":[],'energy_point_error_%':[],"phi":[],"est_phi":[],'phi_error_%':[],"theta":[],"est_theta":[],'theta_error_%':[],"est_theta_point":[],'theta_point_error_%':[],'set':[]}
     for i in range(N_Train + N_CV + N_Test):
         print(f"Generating trajectory {i}; Energy : {energy[i]},Theta : {theta[i]},Phi : {phi[i]}")
         traj,obs_traj_estimated_parameters = generator.generate(energy=energy[i],theta=theta[i],phi=phi[i])
 
         traj.ID = i
-        Dataset.append(copy.deepcopy(traj))
         traj_meta_data['ID'].append(i)
         traj_meta_data['energy'].append(energy[i])
         traj_meta_data['est_energy'].append(obs_traj_estimated_parameters['init_energy'].item())
@@ -994,19 +999,18 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
 
         if i<N_Train:
             traj_meta_data['set'].append('train')
+            training_set.append(copy.deepcopy(traj))
         elif i < N_CV + N_Train:
             traj_meta_data['set'].append('validation')
+            CV_set.append(copy.deepcopy(traj))
         else:
             traj_meta_data['set'].append('test')
+            test_set.append(copy.deepcopy(traj))
 
     traj_meta_data_df = pd.DataFrame(traj_meta_data)
     traj_meta_data_df.set_index('ID', inplace=True)
     traj_meta_data_df.to_csv(os.path.join(output_dir,f'{dataset_name}_traj_metadata.csv'))
 
-    training_set = Dataset[:N_Train]
-    Dataset = Dataset[N_Train:]
-    CV_set =  Dataset[:N_CV]
-    test_set = Dataset[N_CV:]
     torch.save([training_set,CV_set,test_set], os.path.join(output_dir,f'{dataset_name}.pt'))
 
 def setup_table_formats(input_file):
@@ -1062,20 +1066,6 @@ def setup_table_formats(input_file):
     headers = ['Energy [MeV]','dE/dx','Range [cm]','Longitudinal Straggling [cm]','Lateral Straggling [cm]']
     df.to_csv(os.path.join("Tools","stpHydrogen_new.txt"), sep=' ', index=False, header=headers)
 
-def test():
-    #Check that f works like the same with 1 and N batches
-    [train_set,CV_set, test_set] =  torch.load(r"/Users/amitmilstein/Documents/Ben_Gurion_Univ/MSc/TPC_RTSNet/TPC_Reconstruction/Simulations/Particle_Tracking/data/dataset_14_03_24__21_49.pt")
-    min_traj_length = min([traj.traj_length for traj in train_set])
-    batch_size = len(train_set)
-    space_vectors = torch.zeros([batch_size, train_set[0].x_real.shape[0], min_traj_length])
-    for i in range(batch_size):
-        space_vectors[i,:,:min_traj_length] = train_set[i].x_real[:,:min_traj_length]
-    for i in range(min_traj_length-1):
-        propagation = f(space_vectors[:,:,i],train_set[0].delta_t)
-        true = space_vectors[:,:,i+1].unsqueeze(-1)
-        if torch.eq(torch.round(true*100)/100,torch.round(propagation*100)/100).all().item() != True:
-            print("ERROR")
-    
 if __name__ == "__main__":
     if simulation_config.mode == "generate_dataset":
         generate_dataset(N_Train=simulation_config.num_train_traj,

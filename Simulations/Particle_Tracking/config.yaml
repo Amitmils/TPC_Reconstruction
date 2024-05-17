@@ -3,12 +3,12 @@ state_vector_size: 6
 observation_vector_size: 3
 
 #Data Split
-train_set_size: 150
+train_set_size: 1000
 CV_set_size: 250
 test_set_size: 250
 batch_size: 50
-delta_t_factor : 1 # 0.01ns x Factor
-force_batch: [] #For debug
+interpolation_points_to_add : 1 # number of points to add between every 2 clusters for backward pass
+force_batch: [10] #For debug
 train: true
 test_mode: FW + BW
 
@@ -19,23 +19,23 @@ training_scheduler:
   '0':
     mode: FW
     lr: 1.0e-3
-    spoon_feeding : 10
-    n_epochs: 40
-    max_train_sequence_length: -1
+    spoon_feeding : true
+    n_epochs: 10
   '1':
-    mode: BW
+    mode: FW
     lr: 1.0e-3
-    n_epochs: 40
-    loss: velocity
-    spoon_feeding : 40 
-    max_train_sequence_length: -1
+    spoon_feeding : 0
+    n_epochs: 30
   '2':
     mode: BW
-    lr: 1.0e-4
-    n_epochs: 10
-    loss: velocity
-    spoon_feeding : 10
-    max_train_sequence_length: -1
+    lr: 1.0e-3
+    n_epochs: 25
+    # loss: velocity
+  '3':
+    mode: BW
+    lr: 5.0e-4
+    n_epochs: 20
+    # loss: velocity
 
 
 
@@ -50,4 +50,4 @@ output_dim_mult_RTSNet: 40
 # #Paths
 
 path_results: "Simulations/Particle_Tracking/models"
-Dataset_path: "Simulations/Particle_Tracking/data/Low_Energy_Set_15_05_24__21_25.pt"
+Dataset_path: "Simulations\\Particle_Tracking\\data\\point5-3Mev_Dataset_100points_17_05_24__13_21.pt"

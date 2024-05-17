@@ -28,11 +28,13 @@ mode: "generate_dataset" # "generate_dataset" - generate a whole dataset // "gen
 
 ##Config Parameters for "generate_dataset"
 num_train_traj : 50
-num_val_traj: 20
-num_test_traj : 20
-dataset_name : "Low_Energy_Set"
+num_val_traj: 25
+num_test_traj : 25
+sub_sample_rate_data: 10
+
+dataset_name : "point5-3Mev_Dataset_100points"
 output_dir : "Simulations/Particle_Tracking/data" # where to save results
-angle_energy_table_path : "Tools/Angle_Energy.txt"
+angle_energy_table_path : Tools\Angle_Energy_point5-3MeV.txt
 
 ##Config Parameters for "generate_traj"
 energy : 10.0519532520249 #MeV

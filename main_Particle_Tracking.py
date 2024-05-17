@@ -1,5 +1,7 @@
 import torch
 from Simulations.Extended_sysmdl import SystemModel
+import os
+os.chdir(r'C:\Users\owner\Documents\Repos\TPC_Reconstruction') ## How to make this as the default?
 
 from Pipelines.Pipeline_ERTS import Pipeline_ERTS as Pipeline
 from Pipelines.Pipeline_concat_models import Pipeline_twoRTSNets
@@ -68,7 +70,6 @@ print("testset size:",len(test_set))
 ###  System model   ###
 #######################
 sys_model = SystemModel(f, h, system_config.state_vector_size, system_config.observation_vector_size)# parameters for GT
-
 
 #######################
 ### Evaluate RTSNet ###
