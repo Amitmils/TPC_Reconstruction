@@ -22,6 +22,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import RANSACRegressor
 from matplotlib.patches import Polygon
 import time
+import logging
 
 # if torch.cuda.is_available():
 #     device = torch.device('cuda')
@@ -634,8 +635,15 @@ def estimation_summary(traj_set,output_path):
 
     df = pd.DataFrame(set_summary)
     df.set_index('ID', inplace=True)
-
-    df.to_csv(output_path)
+    plt.scatter(df['energy'],df['MP energy obs'],s=5,label="MP Energy Obs")
+    plt.scatter(df['energy'],df['SP energy bw'],s=5,label="SP Energy BW")
+    plt.legend()
+    plt.title("Energy Error Esimtation %")
+    plt.xlabel("Energy [MeV]")
+    plt.ylabel("Error [%]")
+    plt.grid()
+    plt.savefig(os.path.join(output_path,"Energy_Estimation.png"))
+    df.to_csv(os.path.join(output_path,"Estimation_Summary.csv"))
 
 
 def get_energy_from_brho(brho):
@@ -705,7 +713,7 @@ def get_mx_0(traj_coordinates):
         "initial_phi" : init_phi,
         "init_radius" : init_radius,
         "init_energy" : init_energy,
-        "inital_theta_point" : torch.arctan2(torch.sqrt(traj_coordinates[0,0]**2 + traj_coordinates[1,0]**2),traj_coordinates[2,0]),
+        "inital_theta_point" : torch.arctan2(torch.sqrt(traj_coordinates[-3,0]**2 + traj_coordinates[-2,0]**2),traj_coordinates[-1,0]),
         "inital_energy_point" : get_energy_from_velocities(traj_coordinates[-3,0],traj_coordinates[-2,0],traj_coordinates[-1,0])
 
     }
@@ -1017,6 +1025,31 @@ def generate_dataset(N_Train,N_Test,N_CV,dataset_name ,output_dir):
 
     torch.save([training_set,CV_set,test_set], os.path.join(output_dir,f'{dataset_name}.pt'))
 
+def setup_logger(log_file):
+
+    # If the log file already exists, delete it
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    # Create a custom logger
+    logger = logging.getLogger('file_copy_logger')
+    logger.setLevel(logging.DEBUG)  # Set the logging level
+
+    # Create handlers
+    file_handler = logging.FileHandler(log_file)
+    console_handler = logging.StreamHandler()
+
+    # Set the logging level for each handler
+    file_handler.setLevel(logging.DEBUG)
+    console_handler.setLevel(logging.DEBUG)
+
+    # Add the handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+
 def setup_table_formats(input_file):
 
     # Load the data from the text file
@@ -1041,13 +1074,13 @@ def setup_table_formats(input_file):
     def convert_to_cm(value, unit):
         value = float(value.replace(',', '|').replace('.', ',').replace('|', '.'))
         if unit == 'um':
-            return value / 10000  # 1 um = 0.0001 cm
+            return value / 10000 # 1 um = 0.0001 cm
         elif unit == 'mm':
-            return value / 10     # 1 mm = 0.1 cm
+            return value / 10    # 1 mm = 0.1 cm
         elif unit == 'cm':
             return value         # If already in cm, return as is
         elif unit == 'm':
-            return value * 100        # If already in cm, return as is
+            return value * 100   # If already in cm, return as is
         elif unit == 'km':
             return value * 100000        
         else:

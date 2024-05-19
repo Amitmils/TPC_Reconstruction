@@ -12,7 +12,12 @@ from datetime import datetime
 from RTSNet.RTSNet_nn import RTSNetNN
 from Tools.utils import *
 
-print("Pipeline Start")
+
+
+
+system_config= CONFIG("Simulations/Particle_Tracking/config.yaml")
+system_config.logger = setup_logger(os.path.join(system_config.path_results,"temp_log.log")) #this logger will be in config and in Pipeline itself
+system_config.logger.info("Pipeline Start")
 
 ################
 ### Get Time ###
@@ -22,16 +27,15 @@ now = datetime.now()
 strToday = today.strftime("%m.%d.%y")
 strNow = now.strftime("%H:%M:%S")
 strTime = strToday + "_" + strNow
-print("Current Time =", strTime)
+system_config.logger.info("Current Time = %s", strTime)
 
 ##########################
 ### Parameter settings ###
 ##########################
-system_config= CONFIG("Simulations/Particle_Tracking/config.yaml")
 if system_config.use_cuda:
    if torch.cuda.is_available():
       device = torch.device('cuda')
-      print("Using GPU")
+      system_config.logger.info("Using GPU")
       torch.set_default_dtype(torch.float32)  # Set default data type
       torch.set_default_device('cuda')  # Set default device (optional)
    else:
@@ -39,14 +43,17 @@ if system_config.use_cuda:
 else:
    device = torch.device('cpu')
    torch.set_default_device('cpu')  # Set default device (optional)
-   print("Using CPU")
+   system_config.logger.info("Using CPU")
 
 
 ####################
 ###  load data   ###
 ####################
-print(f"Data Load : {os.path.basename(system_config.Dataset_path)}")
-[train_set,CV_set, test_set] =  torch.load(system_config.Dataset_path)
+system_config.logger.info(f"Train / CV Load : {os.path.basename(system_config.Dataset_path)}")
+system_config.logger.info(f"Test Load : {os.path.basename(system_config.test_set_path)}")
+[train_set,CV_set, _] =  torch.load(system_config.Dataset_path)
+[_ ,_ , test_set] =  torch.load(system_config.test_set_path)
+
  
 
 #Extract Relevant Data on the Trajectories
@@ -57,14 +64,20 @@ system_config.FTT_delta_t = train_set[0].delta_t
 system_config.train_set_size = min(len(train_set),system_config.train_set_size)
 system_config.CV_set_size = min(len(CV_set),system_config.CV_set_size)
 system_config.test_set_size = min(len(test_set),system_config.test_set_size)
+# system_config.output_folder = os.path.join(system_config.path_results,"##"+today.strftime("%m_%d")+"##"+now.strftime("%H_%M_%S"))
+# os.makedirs(os.path.join(system_config.output_folder,'models'))
+# os.makedirs(os.path.join(system_config.output_folder,'results'))
+
+
 
 train_set = train_set[:system_config.train_set_size]
 CV_set = CV_set[:system_config.CV_set_size]
-test_set = CV_set[:system_config.test_set_size]
+test_set = test_set[:system_config.test_set_size]
 
-print("trainset size:",len(train_set))
-print("cvset size:",len(CV_set))
-print("testset size:",len(test_set))
+
+system_config.logger.info("trainset size: %d",len(train_set))
+system_config.logger.info("cvset size: %d",len(CV_set))
+system_config.logger.info("testset size: %d",len(test_set))
 
 #######################
 ###  System model   ###
@@ -86,7 +99,8 @@ RTSNet_model.NNBuild(sys_model,system_config)
 RTSNet_Pipeline = Pipeline(strTime, "RTSNet", "RTSNet",system_config)
 RTSNet_Pipeline.setssModel(sys_model)
 RTSNet_Pipeline.setModel(RTSNet_model)
-print("Number of trainable parameters for RTSNet:",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
+RTSNet_Pipeline.logger = system_config.logger
+RTSNet_Pipeline.logger.info("Number of trainable parameters for RTSNet: %d",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
 RTSNet_Pipeline.setTrainingParams()
 if system_config.train == True:
    [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set)
