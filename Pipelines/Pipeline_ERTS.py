@@ -9,7 +9,7 @@ import time
 import random
 import numpy as np
 from Plot import Plot_extended as Plot
-from Tools.utils import get_mx_0,System_Mode,Trajectory_SS_Type,estimation_summary
+from Tools.utils import get_mx_0,System_Mode,Trajectory_SS_Type,estimation_summary,get_energy_from_velocities,SS_VARIABLE
 import os
 import matplotlib.pyplot as plt
 import time
@@ -107,6 +107,7 @@ class Pipeline_ERTS:
               f"Next Switch Epoch : {self.next_phase_change}\n"
               f"Learning Rate : {self.learningRate}\n"
               f"Mode : {self.SYSTEM_MODE.value}\n"
+              f"Loss : {self.loss}\n"
               f"Spoon Feeding: {self.spoon_feeding}\n"
               f"Training {sum(p.numel() for p in self.optimizer.param_groups[0]['params'])} parameters\n\n"
               f"######## Entered Training Phase {self.current_phase} ########\n")
@@ -218,31 +219,27 @@ class Pipeline_ERTS:
             ########################
 
             self.logger.info(f"Time : {time.time()-start}")
-            self.logger.info(f"P{self.current_phase}",ti, "MSE Training :", self.MSE_train_dB_epoch[ti], "[dB]", "MSE Validation :", self.MSE_cv_dB_epoch[ti],
-                  "[dB]")
+            self.logger.info(f"P{self.current_phase} {ti} MSE Training : {round(self.MSE_train_dB_epoch[ti].item(),3)} [dB] MSE Validation : {round(self.MSE_cv_dB_epoch[ti].item(),3)} [dB]")
 
             if (ti > 0):
                 d_train = self.MSE_train_dB_epoch[ti] - self.MSE_train_dB_epoch[ti - 1]
                 d_cv = self.MSE_cv_dB_epoch[ti] - self.MSE_cv_dB_epoch[ti - 1]
-                self.logger.info("diff MSE Training :", d_train, "[dB]", "diff MSE Validation :", d_cv, "[dB]")
-
-            self.logger.info("Optimal idx:", self.MSE_cv_idx_opt, "Optimal :", self.MSE_cv_dB_opt, "[dB]")
+                self.logger.info(f"diff MSE Training : {round(d_train.item(),3)} [dB] diff MSE Validation : {round(d_cv.item(),3)} [dB]")
+            self.logger.info(f"Optimal idx: {self.MSE_cv_idx_opt} Optimal : {round(self.MSE_cv_dB_opt.item(),3)} [dB]")
 
         torch.save(best_model, os.path.join(self.config.path_results,"temp models",f"best-model-weights_FINAL.pt"))
-        # self.plot_training_summary() #TODO Why doesnt it work?
         return [self.MSE_cv_linear_epoch, self.MSE_cv_dB_epoch, self.MSE_train_linear_epoch, self.MSE_train_dB_epoch]
 
-    def plot_training_summary(self):
+    def plot_training_summary(self,output_path):
         self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
         self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
-
         plt.figure()
         plt.plot(range(len(self.MSE_train_dB_epoch)),self.MSE_train_dB_epoch,label='Train loss',linewidth=0.5)
         plt.plot(range(len(self.MSE_cv_dB_epoch)),self.MSE_cv_dB_epoch,label='CV loss',linewidth=0.8,linestyle='--')
         plt.scatter(self.MSE_cv_opt_id_phase[:int(self.current_phase) + 1], self.MSE_cv_opt_dB_phase[:int(self.current_phase)+1], color='green', marker='o',s=10,label='Opt MSE')  # Mark specific points
-        # Mark best MSE in each phase
-        # for i in range(int(self.current_phase)+1):
-        #     plt.text((self.phase_change_epochs[i] + self.phase_change_epochs[i+1])/2 - 10, plt.gca().get_ylim()[1] + 0.5, f'Opt MSE {round(self.MSE_cv_opt_dB_phase[i].item(),2)})', fontsize=10)
+        # # # Mark best MSE in each phase
+        # for i in range(min(len(self.phase_change_epochs),len(self.MSE_cv_opt_dB_phase))):
+        #     plt.text(self.phase_change_epochs[i] + 20, plt.gca().get_ylim()[1] + 0.5, f'Opt MSE {round(self.MSE_cv_opt_dB_phase[i].item(),2)})', fontsize=10)
         # Mark Phase switches
         for epoch in self.phase_change_epochs:
             plt.axvline(x=epoch, color='red', linestyle='--',linewidth=0.7)
@@ -253,8 +250,7 @@ class Pipeline_ERTS:
         plt.ylabel('MSE [dB]')
         plt.title("Training Losses", y=1.09)
         plt.legend()
-        plt.show()
-
+        plt.savefig(os.path.join(output_path,"Learning_Curve.png"))
     def NNTest(self, SysModel, test_set,load_model_path=None):
 
         assert len(test_set), "Test set size is 0!"
@@ -299,8 +295,7 @@ class Pipeline_ERTS:
         # self.test_std_dB = 10 * torch.log10(self.MSE_test_linear_std + self.MSE_test_linear_avg) - self.MSE_test_dB_avg
 
         # Print MSE and std
-        msg = self.modelName + "-" + "MSE Test: " + str(self.MSE_test_dB_avg.item()) + " [dB]"
-        self.logger.info(msg)
+        self.logger.info(f"{self.modelName} - MSE Test: {self.MSE_test_dB_avg.item()}[dB]")
         # str = self.modelName + "-" + "STD Test:"
         # print(str, self.test_std_dB, "[dB]")
         # Print Run Time
@@ -316,17 +311,9 @@ class Pipeline_ERTS:
         shutil.copy2(os.path.join(self.config.path_results,"temp_log.log"), os.path.join(run_path,'logger.log'))
         shutil.copytree(os.path.join(self.config.path_results, "temp models"), run_models_path,dirs_exist_ok=True)
         estimation_summary(test_set,run_results_path)
+        self.plot_training_summary(run_results_path)
 
         return [self.MSE_test_linear_avg, self.MSE_test_dB_avg, t]
-
-    def PlotTrain_RTS(self, MSE_KF_linear_arr, MSE_KF_dB_avg, MSE_RTS_linear_arr, MSE_RTS_dB_avg):
-    
-        self.Plot = Plot(self.folderName, self.modelName)
-
-        self.Plot.NNPlot_epochs(self.train_set_size,self.num_epochs, self.test_set_size, MSE_KF_dB_avg, MSE_RTS_dB_avg,
-                                self.MSE_test_dB_avg, self.MSE_cv_dB_epoch, self.MSE_train_dB_epoch)
-
-        self.Plot.NNPlot_Hist(MSE_KF_linear_arr, MSE_RTS_linear_arr, self.MSE_test_linear_arr)
 
     def calculate_loss(self,traj_batch,SysModel,epoch_num,batch_type):
             
@@ -431,7 +418,6 @@ class Pipeline_ERTS:
                 FTT_BW_mask_loss = clustered_in_generated_mask.clone()
 
                 for id_in_batch in range(len(traj_batch)):
-
                     cluster_ids_in_fw = torch.cat((torch.tensor([[0]]), update_step_in_fw_mask[id_in_batch,0,:].nonzero()), dim=0) #add the first cluster (this was ignored in FW)
                     cluster_ids_in_FFT = traj_batch[id_in_batch].t
                     relevant_ids_est = list()
@@ -499,7 +485,7 @@ class Pipeline_ERTS:
                 else:
                     MSE_batch_linear_LOSS = self.loss_fn(x_out_forward_batch[update_step_in_fw_mask],batch_target[clustered_in_generated_mask])
             else:
-                MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])
+                    MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])
 
 
             for traj_id in range(len(traj_batch)):

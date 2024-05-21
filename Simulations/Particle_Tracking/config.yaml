@@ -6,10 +6,10 @@ observation_vector_size: 3
 train_set_size: 1000
 CV_set_size: 1000
 test_set_size: 1000
-batch_size: 50
+batch_size: 100
 interpolation_points_to_add : 0 # number of points to add between every 2 clusters for backward pass
 force_batch: [] #For debug
-train: false
+train: true
 test_mode: FW + BW
 
 #Training Scheduler
@@ -24,7 +24,7 @@ training_scheduler:
   '1':
     mode: FW
     lr: 1.0e-3
-    n_epochs: 15
+    n_epochs: 20
   '2':
     mode: BW
     lr: 1.0e-3
@@ -41,11 +41,13 @@ training_scheduler:
     n_epochs: 20
     loss: velocity
 
+
 ################
 ## loss types ##
 ################
 # all (default) - loss between all of the state vectors
 # velocity - loss only on the velocities of the first state vector
+# energy - loss only on the intial energy trajectory
 # interpolation - loss only on the added interpolated space state vectors
 
 
@@ -61,6 +63,6 @@ output_dim_mult_RTSNet: 40
 
 # #Paths
 
-path_results: "Simulations/Particle_Tracking"
-Dataset_path: "Simulations/Particle_Tracking/data/point5-3Mev_Dataset_100points_17_05_24__13_21.pt" # Train / CV
-test_set_path: "Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt" # Test
+path_results: Simulations/Particle_Tracking
+Dataset_path: Simulations/Particle_Tracking/data/point4-3Mev_Dataset_150points_19_05_24__20_25.pt # Train / CV
+test_set_path: Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt # Test

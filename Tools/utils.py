@@ -108,7 +108,7 @@ DRIFT_VELOCITY_CM_US = 1 # [cm/us]
 #Setup Chamber parameters
 B = simulation_config.magnetic_field #Applied Magnetic Field (T)
 E = torch.cos((Q_PROTON*B)/MASS_PROTON_KG) * simulation_config.electric_field #Applied Electric Field (V/m)
-GAS_MEDIUM_DENSITY = 3.3e-5 * 1000 #mg/cm3 at 1 bar
+GAS_MEDIUM_DENSITY = simulation_config.gas_density #mg/cm3 at 1 bar
 
 # Conversion macros
 CM_NS__TO__M_S = 1e7
@@ -322,7 +322,7 @@ class Trajectory():
         self.init_teta = init_teta
         self.init_phi = init_phi
         self.t = traj_data['t'] if 't' in traj_data else torch.tensor([])
-        self.delta_t = delta_t
+        self.delta_t = delta_t if delta_t is not None else 0.01
         self.real_energy = traj_data['energy'] if 'energy' in traj_data else torch.tensor([])
         self.generated_traj = traj_data['real_traj']
         self.x_real = traj_data['gt_traj']
@@ -331,8 +331,6 @@ class Trajectory():
 
         self.x_estimated_FW = torch.zeros_like(self.x_real)
         self.x_estimated_BW = torch.zeros_like(self.x_real)
-        self.energy_estimated_FW = torch.zeros_like(self.x_real)
-        self.energy_estimated_BW = torch.zeros_like(self.x_real)
 
     def set_name(self,name):
         self.traj_name = name
@@ -602,11 +600,12 @@ def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
         traj.y += gaussian_noise
     return traj_list
 
-def error_estimations(type,real_energy,real_theta,estimation):
+def error_estimations(type,real_energy,real_theta,real_phi,estimation):
     est_data = {
+           f"MP phi {type}" : round(torch.abs(100*(estimation['initial_phi']-real_phi)/real_phi).item(),2),
            f"MP energy {type}" : round(torch.abs(100*(estimation['init_energy']-real_energy)/real_energy).item(),2),
            f"MP theta {type}" : round(torch.abs(100*(estimation['inital_theta']-real_theta)/real_theta).item(),2),
-           f"SP energy {type}" : round(torch.abs(100*(estimation['inital_energy_point']-real_energy)/real_energy).item(),2),
+           f"SP energy {type}" : round(torch.abs(100*(estimation['inital_energy_point']-real_energy)/real_energy).item(),2) if type!="obs" else "-", #no SP energy estimation in OBS
            f"SP theta {type}" : round(torch.abs(100*(estimation['inital_theta_point']-real_theta)/real_theta).item(),2)
         }
     return est_data
@@ -622,12 +621,14 @@ def estimation_summary(traj_set,output_path):
         }
         real_energy = traj_set[traj_id].init_energy
         real_theta = traj_set[traj_id].init_teta
+        real_phi = traj_set[traj_id].init_phi
         traj_data = [real_energy,real_theta]
         traj_data = {"ID" : traj_id,
                      "energy": real_energy,
-                     "theta" : real_theta}
+                     "theta" : real_theta,
+                     "phi": real_phi}
         for type,est in estimations.items():
-            traj_data = {**traj_data,**error_estimations(type,real_energy,real_theta,est)}
+            traj_data = {**traj_data,**error_estimations(type,real_energy,real_theta,real_phi,est)}
             if type == 'gen':
                 est_theta = torch.arctan2(torch.sqrt(traj_set[traj_id].generated_traj[0,1]**2 + traj_set[traj_id].generated_traj[1,1]**2),traj_set[traj_id].generated_traj[2,1])
                 traj_data[f"SP theta {type}"] = round(torch.abs(100*(real_theta-est_theta)/est_theta).item(),2),
@@ -635,6 +636,7 @@ def estimation_summary(traj_set,output_path):
 
     df = pd.DataFrame(set_summary)
     df.set_index('ID', inplace=True)
+    plt.figure()
     plt.scatter(df['energy'],df['MP energy obs'],s=5,label="MP Energy Obs")
     plt.scatter(df['energy'],df['SP energy bw'],s=5,label="SP Energy BW")
     plt.legend()
@@ -1119,9 +1121,9 @@ if __name__ == "__main__":
 
         traj_to_plot = []
         if simulation_config.plot_real_traj:
-            traj_to_plot.append(Trajectory_SS_Type.Real)
+            traj_to_plot.append(Trajectory_SS_Type.GTT)
         if simulation_config.plot_observed_traj:
-            traj_to_plot.append(Trajectory_SS_Type.Observed)
+            traj_to_plot.append(Trajectory_SS_Type.OT)
 
         if simulation_config.plot_traj and len(traj_to_plot):
             traj.traj_plots(traj_to_plot,plot_energy_on_pad=simulation_config.plot_energy_on_pad)
