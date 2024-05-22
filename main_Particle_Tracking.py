@@ -11,6 +11,7 @@ from Pipelines.Pipeline_concat_models import Pipeline_twoRTSNets
 from datetime import datetime
 from RTSNet.RTSNet_nn import RTSNetNN
 from Tools.utils import *
+from typing import List
 
 
 
@@ -82,13 +83,10 @@ system_config.logger.info("testset size: %d",len(test_set))
 #######################
 sys_model = SystemModel(f, h, system_config.state_vector_size, system_config.observation_vector_size)# parameters for GT
 
-#######################
-### Evaluate RTSNet ###
-#######################
 
 ## Build Neural Networks
-RTSNet_Models = [] #placeholder
-RTSNet_Pipelines = [] #placeholder
+RTSNet_Models: List[RTSNetNN] = list()
+RTSNet_Pipelines: List[Pipeline] = list()
 for i in range(system_config.first_run_id,system_config.num_runs):
    RTSNet_Models.append(RTSNetNN())
    RTSNet_Models[i].NNBuild(sys_model,system_config)
@@ -102,7 +100,7 @@ for i in range(system_config.first_run_id,system_config.num_runs):
    if system_config.train == True:
       [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines[i].NNTrain(sys_model, train_set, CV_set,run_num = i)
    ## Test Neural Network
-   RTSNet_Pipelines[i].NNTest(sys_model,test_set,run_num = i)
+   RTSNet_Pipelines[i].NNTest(sys_model,test_set,run_num = i ,load_model_path=system_config.model_path)
 ####################################################################################
 
 
