@@ -64,9 +64,7 @@ system_config.FTT_delta_t = train_set[0].delta_t
 system_config.train_set_size = min(len(train_set),system_config.train_set_size)
 system_config.CV_set_size = min(len(CV_set),system_config.CV_set_size)
 system_config.test_set_size = min(len(test_set),system_config.test_set_size)
-# system_config.output_folder = os.path.join(system_config.path_results,"##"+today.strftime("%m_%d")+"##"+now.strftime("%H_%M_%S"))
-# os.makedirs(os.path.join(system_config.output_folder,'models'))
-# os.makedirs(os.path.join(system_config.output_folder,'results'))
+os.makedirs(os.path.join(system_config.path_results,'temp models'),exist_ok=True)
 
 
 
@@ -88,95 +86,24 @@ sys_model = SystemModel(f, h, system_config.state_vector_size, system_config.obs
 ### Evaluate RTSNet ###
 #######################
 
-######################
-## RTSNet - 1 full ###
-######################
-
-## Build Neural Network
-RTSNet_model = RTSNetNN()
-RTSNet_model.NNBuild(sys_model,system_config)
-# ## Train Neural Network
-RTSNet_Pipeline = Pipeline(strTime, "RTSNet", "RTSNet",system_config)
-RTSNet_Pipeline.setssModel(sys_model)
-RTSNet_Pipeline.setModel(RTSNet_model)
-RTSNet_Pipeline.logger = system_config.logger
-RTSNet_Pipeline.logger.info("Number of trainable parameters for RTSNet: %d",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
-RTSNet_Pipeline.setTrainingParams()
-if system_config.train == True:
-   [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model, train_set, CV_set)
-## Test Neural Network
-RTSNet_Pipeline.NNTest(sys_model,test_set)
+## Build Neural Networks
+RTSNet_Models = [] #placeholder
+RTSNet_Pipelines = [] #placeholder
+for i in range(system_config.first_run_id,system_config.num_runs):
+   RTSNet_Models.append(RTSNetNN())
+   RTSNet_Models[i].NNBuild(sys_model,system_config)
+   # ## Train Neural Network
+   RTSNet_Pipelines.append(Pipeline(strTime, "RTSNet", f"RTSNet{i}",system_config))
+   RTSNet_Pipelines[i].setssModel(sys_model)
+   RTSNet_Pipelines[i].setModel(RTSNet_Models[i])
+   RTSNet_Pipelines[i].logger = system_config.logger
+   RTSNet_Pipelines[i].logger.info(f"Number of trainable parameters for RTSNet{i}: %d",sum(p.numel() for p in RTSNet_Models[i].parameters() if p.requires_grad))
+   RTSNet_Pipelines[i].setTrainingParams()
+   if system_config.train == True:
+      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines[i].NNTrain(sys_model, train_set, CV_set,run_num = i)
+   ## Test Neural Network
+   RTSNet_Pipelines[i].NNTest(sys_model,test_set,run_num = i)
 ####################################################################################
-
-if False:
-################################
-## RTSNet - 2 with full info ###
-################################
-   if load_dataset_for_pass2:
-      print("Load dataset for pass 2")
-      [train_input_pass2, train_target_pass2, cv_input_pass2, cv_target_pass2, test_input, test_target] = torch.load(DatasetPass1_path)
-      
-      print("Data Shape for RTSNet pass 2:")
-      print("testset state x size:",test_target.size())
-      print("testset observation y size:",test_input.size())
-      print("trainset state x size:",train_target_pass2.size())
-      print("trainset observation y size:",len(train_input_pass2),train_input_pass2[0].size())
-      print("cvset state x size:",cv_target_pass2.size())
-      print("cvset observation y size:",len(cv_input_pass2),cv_input_pass2[0].size())  
-   else:
-      ### save result of RTSNet1 as dataset for RTSNet2 
-      RTSNet_model_pass1 = RTSNetNN()
-      RTSNet_model_pass1.NNBuild(sys_model, args)
-      RTSNet_Pipeline_pass1 = Pipeline(strTime, "RTSNet", "RTSNet",system_config)
-      RTSNet_Pipeline_pass1.setssModel(sys_model)
-      RTSNet_Pipeline_pass1.setModel(RTSNet_model_pass1)
-      ### Optional to test it on test-set, just for checking
-      print("Test RTSNet pass 1 on test set")
-      [_, _, _,rtsnet_out_test,_] = RTSNet_Pipeline_pass1.NNTest(sys_model, test_input, test_target, path_results,load_model=True,load_model_path=RTSNetPass1_path)
-
-      print("Test RTSNet pass 1 on training set")
-      [_, _, _,rtsnet_out_train,_] = RTSNet_Pipeline_pass1.NNTest(sys_model, train_input, train_target, path_results,load_model=True,load_model_path=RTSNetPass1_path)
-      print("Test RTSNet pass 1 on cv set")
-      [_, _, _,rtsnet_out_cv,_] = RTSNet_Pipeline_pass1.NNTest(sys_model, cv_input, cv_target, path_results,load_model=True,load_model_path=RTSNetPass1_path)
-      
-
-      train_input_pass2 = rtsnet_out_train
-      train_target_pass2 = train_target
-      cv_input_pass2 = rtsnet_out_cv
-      cv_target_pass2 = cv_target
-
-      torch.save([train_input_pass2, train_target_pass2, cv_input_pass2, cv_target_pass2, test_input, test_target], DatasetPass1_path)
-   #######################################
-   ## RTSNet_2passes with full info   
-   # Build Neural Network
-   print("RTSNet(with full model info) pass 2 pipeline start!")
-   RTSNet_model = RTSNetNN()
-   RTSNet_model.NNBuild(sys_model_pass2, args)
-   print("Number of trainable parameters for RTSNet pass 2:",sum(p.numel() for p in RTSNet_model.parameters() if p.requires_grad))
-   ## Train Neural Network
-   RTSNet_Pipeline = Pipeline(strTime, "RTSNet", "RTSNet_pass2")
-   RTSNet_Pipeline.setssModel(sys_model_pass2)
-   RTSNet_Pipeline.setModel(RTSNet_model)
-   RTSNet_Pipeline.setTrainingParams(args)
-   #######################################
-   [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipeline.NNTrain(sys_model_pass2, cv_input_pass2, cv_target_pass2, train_input_pass2, train_target_pass2, path_results)
-   RTSNet_Pipeline.save()
-   print("RTSNet pass 2 pipeline end!")
-   #######################################
-   # load trained Neural Network
-   print("Concat two RTSNets and test")
-   RTSNet_model1 = torch.load(RTSNetPass1_path)
-   RTSNet_model2 = torch.load('RTSNet/best-model.pt')
-   ## Set up Neural Network
-   RTSNet_Pipeline_2passes = Pipeline_twoRTSNets(strTime, "RTSNet", "RTSNet")
-   RTSNet_Pipeline_2passes.setModel(RTSNet_model1, RTSNet_model2)
-   NumofParameter = RTSNet_Pipeline_2passes.count_parameters()
-   print("Number of parameters for RTSNet with 2 passes: ",NumofParameter)
-   ## Test Neural Network   
-   [MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,rtsnet_out,RunTime] = RTSNet_Pipeline_2passes.NNTest(sys_model, test_input, test_target, path_results)
-
-
-
 
 
 

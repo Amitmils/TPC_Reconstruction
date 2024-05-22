@@ -22,19 +22,12 @@ class Pipeline_ERTS:
         super().__init__()
         self.config = system_config
         self.Time = Time
-        self.folderName = folderName + '/'
         self.modelName = modelName
-        self.modelFileName = self.folderName + "model_" + self.modelName + ".pt"
-        self.PipelineName = self.folderName + "pipeline_" + self.modelName + ".pt"
         self.phase_change_epochs = [0] #for Visualization - aggregate the epochs which a phase changed
-
         if self.config.use_cuda:
             self.device = torch.device('cuda')
         else:
             self.device = torch.device('cpu')
-
-    def save(self):
-        torch.save(self, self.PipelineName)
 
     def setssModel(self, ssModel):
         self.SysModel = ssModel
@@ -42,7 +35,6 @@ class Pipeline_ERTS:
     def setModel(self, model):
         self.model = model
         self.model.config = self.config
-
 
     def setTrainingParams(self):
         self.batch_size = self.config.batch_size # Number of tracks in Batch
@@ -53,7 +45,7 @@ class Pipeline_ERTS:
 
         if self.current_phase !="0":
             prev_phase = str(int(self.current_phase)-1)
-            weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_P{prev_phase}.pt")
+            weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{self.modelName[-1]}P{prev_phase}.pt")
             model_weights = torch.load(weights_path, map_location=self.device)
             self.model.load_state_dict(model_weights)
             self.logger.info(f"Loaded Weights from {os.path.basename(weights_path)}")
@@ -96,13 +88,11 @@ class Pipeline_ERTS:
         self.next_phase_change = self.next_phase_change + self.num_epochs_in_phase
         self.learningRate = self.config.training_scheduler[self.current_phase]["lr"]
         self.SYSTEM_MODE = System_Mode(self.config.training_scheduler[self.current_phase]["mode"])
-        # self.setModel(RTSNetNN())
-        # self.model.NNBuild(self.SysModel,self.config)
         self.set_optimizer() #updates learning rate/training weights
         self.report_training_phase()
 
     def report_training_phase(self):
-        self.logger.info(f"\n######## Entered Training Phase {self.current_phase} ########\n\n"
+        self.logger.info(f"\n######## Entered Training Phase {self.current_phase} {self.modelName} ########\n\n"
               f"Num. of epochs in phase : {self.num_epochs_in_phase}\n"
               f"Next Switch Epoch : {self.next_phase_change}\n"
               f"Learning Rate : {self.learningRate}\n"
@@ -110,9 +100,9 @@ class Pipeline_ERTS:
               f"Loss : {self.loss}\n"
               f"Spoon Feeding: {self.spoon_feeding}\n"
               f"Training {sum(p.numel() for p in self.optimizer.param_groups[0]['params'])} parameters\n\n"
-              f"######## Entered Training Phase {self.current_phase} ########\n")
+              f"######## Entered Training Phase {self.current_phase} {self.modelName} ########\n")
 
-    def NNTrain(self, SysModel, train_set, cv_set):
+    def NNTrain(self, SysModel, train_set, cv_set , run_num):
 
         assert len(cv_set), "CV set size is 0!"
         assert len(train_set), "CV set size is 0!"
@@ -139,8 +129,6 @@ class Pipeline_ERTS:
         for ti in range(0, self.num_epochs):
             start = time.time()
             if ti == self.next_phase_change:
-                # #save best model of Phase
-                # torch.save(best_model, os.path.join(self.config.path_results,"temp models",f"best-model-weights_P{self.current_phase}.pt"))
                 self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
                 self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
                 self.MSE_cv_dB_opt = 1000
@@ -161,7 +149,7 @@ class Pipeline_ERTS:
             n_e = self.config.force_batch if len(self.config.force_batch) else random.sample(range(self.train_set_size), k=self.batch_size)
             train_batch = [train_set[idx] for idx in n_e if train_set[idx].traj_length>-1]
 
-            MSE_train_batch_linear_LOSS = self.calculate_loss(train_batch,SysModel,ti,"Train")
+            MSE_train_batch_linear_LOSS = self.calculate_loss(train_batch,SysModel,"Train",run_num)
 
             # dB Loss
             self.MSE_train_linear_epoch[ti] = MSE_train_batch_linear_LOSS.item()
@@ -195,7 +183,7 @@ class Pipeline_ERTS:
             self.model.eval()
 
             with torch.no_grad():
-                MSE_cv_linear_LOSS = self.calculate_loss(cv_set,SysModel,ti,"CV")
+                MSE_cv_linear_LOSS = self.calculate_loss(cv_set,SysModel,"CV",run_num)
 
                 # dB Loss
                 self.MSE_cv_linear_epoch[ti] = MSE_cv_linear_LOSS.item()
@@ -206,9 +194,9 @@ class Pipeline_ERTS:
                     self.MSE_cv_idx_opt = ti
                     best_model = self.model.state_dict().copy()
                     
-                    torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_P{self.current_phase}.pt"))
+                    torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{run_num}P{self.current_phase}.pt"))
                     if int(self.current_phase) == self.total_num_phases-1:
-                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_FINAL.pt")) 
+                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{run_num}FINAL.pt")) 
 
             # cv_set[0].x_estimated_BW = x_out_cv[0].clone().detach()
             # cv_set[0].x_estimated_FW = x_out_cv_forward[0].clone().detach()
@@ -219,7 +207,7 @@ class Pipeline_ERTS:
             ########################
 
             self.logger.info(f"Time : {time.time()-start}")
-            self.logger.info(f"P{self.current_phase} {ti} MSE Training : {round(self.MSE_train_dB_epoch[ti].item(),3)} [dB] MSE Validation : {round(self.MSE_cv_dB_epoch[ti].item(),3)} [dB]")
+            self.logger.info(f"R{run_num}P{self.current_phase} {ti} MSE Training : {round(self.MSE_train_dB_epoch[ti].item(),3)} [dB] MSE Validation : {round(self.MSE_cv_dB_epoch[ti].item(),3)} [dB]")
 
             if (ti > 0):
                 d_train = self.MSE_train_dB_epoch[ti] - self.MSE_train_dB_epoch[ti - 1]
@@ -227,10 +215,10 @@ class Pipeline_ERTS:
                 self.logger.info(f"diff MSE Training : {round(d_train.item(),3)} [dB] diff MSE Validation : {round(d_cv.item(),3)} [dB]")
             self.logger.info(f"Optimal idx: {self.MSE_cv_idx_opt} Optimal : {round(self.MSE_cv_dB_opt.item(),3)} [dB]")
 
-        torch.save(best_model, os.path.join(self.config.path_results,"temp models",f"best-model-weights_FINAL.pt"))
+        torch.save(best_model, os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{run_num}FINAL.pt"))
         return [self.MSE_cv_linear_epoch, self.MSE_cv_dB_epoch, self.MSE_train_linear_epoch, self.MSE_train_dB_epoch]
 
-    def plot_training_summary(self,output_path):
+    def plot_training_summary(self,output_path,run_num):
         self.MSE_cv_opt_dB_phase[int(self.current_phase)] = self.MSE_cv_dB_opt
         self.MSE_cv_opt_id_phase[int(self.current_phase)] = self.MSE_cv_idx_opt
         plt.figure()
@@ -250,8 +238,8 @@ class Pipeline_ERTS:
         plt.ylabel('MSE [dB]')
         plt.title("Training Losses", y=1.09)
         plt.legend()
-        plt.savefig(os.path.join(output_path,"Learning_Curve.png"))
-    def NNTest(self, SysModel, test_set,load_model_path=None):
+        plt.savefig(os.path.join(output_path,f"Learning_Curve_R{run_num}.png"))
+    def NNTest(self, SysModel, test_set,run_num,load_model_path=None):
 
         assert len(test_set), "Test set size is 0!"
 
@@ -281,7 +269,7 @@ class Pipeline_ERTS:
         torch.no_grad()
         with torch.no_grad():
             start = time.time()
-            self.MSE_test_linear_avg = self.calculate_loss(test_set,SysModel,0,"Test")
+            self.MSE_test_linear_avg = self.calculate_loss(test_set,SysModel,"Test",run_num)
             end = time.time()
             t = end - start
 
@@ -310,12 +298,12 @@ class Pipeline_ERTS:
         os.makedirs(run_results_path,exist_ok=True)
         shutil.copy2(os.path.join(self.config.path_results,"temp_log.log"), os.path.join(run_path,'logger.log'))
         shutil.copytree(os.path.join(self.config.path_results, "temp models"), run_models_path,dirs_exist_ok=True)
-        estimation_summary(test_set,run_results_path)
-        self.plot_training_summary(run_results_path)
+        estimation_summary(test_set,run_results_path,run_num)
+        self.plot_training_summary(run_results_path,run_num)
 
         return [self.MSE_test_linear_avg, self.MSE_test_dB_avg, t]
 
-    def calculate_loss(self,traj_batch,SysModel,epoch_num,batch_type):
+    def calculate_loss(self,traj_batch,SysModel,batch_type,run_num):
             
             self.model.batch_size = len(traj_batch)
             # Init Hidden State
@@ -345,8 +333,10 @@ class Pipeline_ERTS:
                 batch_y[ii,:,:clustered_traj_lengths_in_batch[ii]] = traj_batch[ii].y[:3,:clustered_traj_lengths_in_batch[ii]].squeeze(-1)
                 batch_target[ii,:,:generated_traj_lengths_in_batch[ii]] = traj_batch[ii].generated_traj[:,:generated_traj_lengths_in_batch[ii]].squeeze(-1)
                 clustered_in_generated_mask[ii,:,traj_batch[ii].t[1:]] = 1 #The first t is M1_0,
-                m1_0_noisy,est_para = get_mx_0(traj_batch[ii].y.squeeze(-1))
-                M1_0.append(m1_0_noisy.unsqueeze(0))
+                m1,est_para = get_mx_0(traj_batch[ii].y.squeeze(-1))
+                if run_num>0: #If its not the first run, use the velocities estimations of the previous run
+                    m1[-3:] = traj_batch[ii].x_estimated_BW[-3:,0] #get the velocities from the first pass
+                M1_0.append(m1.unsqueeze(0))
                 ii += 1
 
             M1_0 = torch.cat(M1_0,dim=0)
@@ -494,17 +484,5 @@ class Pipeline_ERTS:
                 traj_batch[traj_id].x_estimated_FW = x_out_forward_batch[traj_id,:,non_zero_ids_in_FW].detach()
                 traj_batch[traj_id].x_estimated_BW = x_out_batch[traj_id,:,non_zero_ids_in_BW].detach()
 
-            # plt.figure()
-            # plt.scatter(traj_batch[0].x_estimated_FW[0,:,0],traj_batch[0].x_estimated_FW[1,:,0],s=15)
-            # plt.scatter(x_out_forward_batch[0,0,:].detach(),x_out_forward_batch[0,1,:].detach(),s=3)
-            # plt.title("FW #1")
-            # plt.figure()
-            # plt.scatter(traj_batch[0].x_estimated_BW[0,:,0],traj_batch[0].x_estimated_BW[1,:,0],s=3)
-            # plt.title("BW")
-            # plt.figure()
-            # # plt.scatter(traj_batch[0].generated_traj[0].squeeze(),traj_batch[0].generated_traj[1].squeeze(),s=5)
-            # plt.scatter(traj_batch[0].generated_traj[0,FTT_BW_mask_loss[0,0,:].nonzero()].squeeze(),traj_batch[0].generated_traj[1,FTT_BW_mask_loss[0,0,:].nonzero()].squeeze(),s=3)
-            # plt.title("FTT")
-            # plt.show()
             return MSE_batch_linear_LOSS
     

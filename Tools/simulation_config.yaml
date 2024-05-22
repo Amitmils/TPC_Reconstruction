@@ -23,7 +23,7 @@ umega_radius : 27.50000088 # 10826.772 * 2.54 /1000
 
 CoM_observations : true #if set to true, observations will be taken from a CoM of the energy cloud. Otherwise, closest pad from real XY
 
-mode: "generate_traj" # "generate_dataset" - generate a whole dataset // "generate_traj" - generate 1 trajectory
+mode: "generate_dataset" # "generate_dataset" - generate a whole dataset // "generate_traj" - generate 1 trajectory
 
 ##Config Parameters for "generate_dataset"
 num_train_traj : 300

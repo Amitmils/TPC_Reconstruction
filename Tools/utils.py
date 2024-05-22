@@ -609,7 +609,7 @@ def error_estimations(type,real_energy,real_theta,real_phi,estimation):
            f"SP theta {type}" : round(torch.abs(100*(estimation['inital_theta_point']-real_theta)/real_theta).item(),2)
         }
     return est_data
-def estimation_summary(traj_set,output_path):
+def estimation_summary(traj_set,output_path,run_num):
     set_summary = list()
     for traj_id in range(len(traj_set)):
 
@@ -644,8 +644,8 @@ def estimation_summary(traj_set,output_path):
     plt.xlabel("Energy [MeV]")
     plt.ylabel("Error [%]")
     plt.grid()
-    plt.savefig(os.path.join(output_path,"Energy_Estimation.png"))
-    df.to_csv(os.path.join(output_path,"Estimation_Summary.csv"))
+    plt.savefig(os.path.join(output_path,f"Energy_Estimation_R{run_num}.png"))
+    df.to_csv(os.path.join(output_path,f"Estimation_Summary_R{run_num}.csv"))
 
 
 def get_energy_from_brho(brho):

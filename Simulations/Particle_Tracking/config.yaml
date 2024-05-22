@@ -6,7 +6,7 @@ observation_vector_size: 3
 train_set_size: 1000
 CV_set_size: 1000
 test_set_size: 1000
-batch_size: 100
+batch_size: 50
 interpolation_points_to_add : 0 # number of points to add between every 2 clusters for backward pass
 force_batch: [] #For debug
 train: true
@@ -15,6 +15,8 @@ test_mode: FW + BW
 #Training Scheduler
 wd: 1.0e-3
 first_phase_id: 0
+first_run_id: 0 #WARNING! Currently no support of starting from starting from a different run
+num_runs : 1
 training_scheduler:
   '0':
     mode: FW
@@ -64,5 +66,5 @@ output_dim_mult_RTSNet: 40
 # #Paths
 
 path_results: Simulations/Particle_Tracking
-Dataset_path: Simulations/Particle_Tracking/data/point4-3Mev_Dataset_150points_19_05_24__20_25.pt # Train / CV
-test_set_path: Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt # Test
+Dataset_path: Simulations/Particle_Tracking/data/point5-3Mev_Dataset_100points_17_05_24__13_21.pt # Train / CV
+test_set_path: Simulations/Particle_Tracking/data/point5-3Mev_Dataset_100points_17_05_24__13_21.pt # Test
