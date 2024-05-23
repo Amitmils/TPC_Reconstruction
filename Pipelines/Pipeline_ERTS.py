@@ -77,7 +77,7 @@ class Pipeline_ERTS:
 
     def switch_to_next_phase(self):
         #Load best weights from phase
-        weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_P{self.current_phase}.pt")
+        weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{self.modelName[-1]}P{self.current_phase}.pt")
         model_weights = torch.load(weights_path, map_location=self.device)
         self.model.load_state_dict(model_weights)
         #continue to next phase
@@ -239,26 +239,25 @@ class Pipeline_ERTS:
         plt.title("Training Losses", y=1.09)
         plt.legend()
         plt.savefig(os.path.join(output_path,f"Learning_Curve_R{run_num}.png"))
-    def NNTest(self, SysModel, test_set,run_num,load_model_path=None):
+
+    def NNTest(self, SysModel, test_set,run_num,set_name,load_model_path=None):
 
         assert len(test_set), "Test set size is 0!"
 
         self.SYSTEM_MODE = System_Mode(self.config.test_mode)
         self.test_set_size = self.model.batch_size = len(test_set)
 
-
         if load_model_path is not None:
             self.logger.info(f"Loading Model from path {load_model_path}")
             model_weights = torch.load(load_model_path, map_location=self.device) 
         else:
-            self.logger.info(f"Loading Model best-model-weights_FINAL")
-            load_model_path = os.path.join(self.config.path_results,"temp models",f'best-model-weights_FINAL.pt')
+            self.logger.info(f"Loading Model best-model-weights_R{run_num}FINAL")
+            load_model_path = os.path.join(self.config.path_results,"temp models",f'best-model-weights_R{run_num}FINAL.pt')
 
        # Load model weights with a with statement
         with open(load_model_path, 'rb') as f:
             model_weights = torch.load(f, map_location=self.device)
 
-       
         # Set the loaded weights to the model
         self.model.load_state_dict(model_weights)
 
@@ -275,35 +274,28 @@ class Pipeline_ERTS:
 
         # Average
         self.MSE_test_dB_avg = 10 * torch.log10(self.MSE_test_linear_avg)
-
-        # Standard deviation
-        # self.MSE_test_linear_std = torch.std(self.MSE_test_linear_arr, unbiased=True)
-
-        # Confidence interval
-        # self.test_std_dB = 10 * torch.log10(self.MSE_test_linear_std + self.MSE_test_linear_avg) - self.MSE_test_dB_avg
-
-        # Print MSE and std
         self.logger.info(f"{self.modelName} - MSE Test: {self.MSE_test_dB_avg.item()}[dB]")
-        # str = self.modelName + "-" + "STD Test:"
-        # print(str, self.test_std_dB, "[dB]")
-        # Print Run Time
         self.logger.info("Inference Time: %d", t)
 
-        today = datetime.today()
-        now = datetime.now()
-        run_path = os.path.join(self.config.path_results,"runs",f"{today.strftime('D%d_M%m')}_{now.strftime('h%H_m%M')}")
-        run_models_path = os.path.join(run_path,"models")
-        run_results_path = os.path.join(run_path,"results")
-        os.makedirs(run_models_path,exist_ok=True)
-        os.makedirs(run_results_path,exist_ok=True)
-        shutil.copy2(os.path.join(self.config.path_results,"temp_log.log"), os.path.join(run_path,'logger.log'))
-        shutil.copytree(os.path.join(self.config.path_results, "temp models"), run_models_path,dirs_exist_ok=True)
-        estimation_summary(test_set,run_results_path,run_num)
-        self.plot_training_summary(run_results_path,run_num)
+        if set_name == "Test":
+            today = datetime.today()
+            now = datetime.now()
+            run_path = os.path.join(self.config.path_results,"runs",f"{today.strftime('D%d_M%m')}_{now.strftime('h%H_m%M')}")
+            run_models_path = os.path.join(run_path,"models")
+            run_results_path = os.path.join(run_path,"results")
+            os.makedirs(run_models_path,exist_ok=True)
+            os.makedirs(run_results_path,exist_ok=True)
+            shutil.copy2(os.path.join(self.config.path_results,"temp_log.log"), os.path.join(run_path,'logger.log'))
+            shutil.copytree(os.path.join(self.config.path_results, "temp models"), run_models_path,dirs_exist_ok=True)
+            estimation_summary(test_set,run_results_path,run_num)
+            try:
+                self.plot_training_summary(run_results_path,run_num)
+            except:
+                self.logger.info("plot_training_summary Failed")
 
         return [self.MSE_test_linear_avg, self.MSE_test_dB_avg, t]
 
-    def calculate_loss(self,traj_batch,SysModel,batch_type,run_num):
+    def calculate_loss(self,traj_batch,SysModel,mode,run_num):
             
             self.model.batch_size = len(traj_batch)
             # Init Hidden State
@@ -335,7 +327,7 @@ class Pipeline_ERTS:
                 clustered_in_generated_mask[ii,:,traj_batch[ii].t[1:]] = 1 #The first t is M1_0,
                 m1,est_para = get_mx_0(traj_batch[ii].y.squeeze(-1))
                 if run_num>0: #If its not the first run, use the velocities estimations of the previous run
-                    m1[-3:] = traj_batch[ii].x_estimated_BW[-3:,0] #get the velocities from the first pass
+                    m1[-3:] = traj_batch[ii].initial_velocity_estimation[run_num-1] #get the velocities from previous run
                 M1_0.append(m1.unsqueeze(0))
                 ii += 1
 
@@ -346,8 +338,8 @@ class Pipeline_ERTS:
             # Forward Computation
             fine_step_for_each_trajID_in_batch = torch.zeros(len(traj_batch),dtype=torch.int)
             for t in range(1,max_clustered_traj_length_in_batch):
-                if not(t%10):
-                    self.logger.info(f"{batch_type} t = {t}")
+                # if not(t%10):
+                #     self.logger.info(f"{mode} t = {t}")
                 distance_from_obs_for_each_trajID_in_batch = torch.full((len(traj_batch),), 1e5)
                 traj_id_in_batch_finished = t > (clustered_traj_lengths_in_batch - 1) #since we run till the maximum t in all trajs in batch, some might end before the others
                 traj_id_in_batch_that_need_prediction = ~traj_id_in_batch_finished
@@ -470,19 +462,25 @@ class Pipeline_ERTS:
                                                                                     smoother_x_tplus2 = torch.unsqueeze(x_out_batch[batch_ids, :, updates_step_map[:,k-2]],2)),2)[~end_of_traj,:]
             #Compute  loss
             if self.SYSTEM_MODE == System_Mode.FW_ONLY:
+                normalizing_factor = (1/torch.sqrt(clustered_traj_lengths_in_batch)).view(-1,1,1) #normalize by trajectory length
                 if self.spoon_feeding: #Till the KNET warms up a bit
-                    MSE_batch_linear_LOSS = self.loss_fn(fw_output_place_holder[update_step_in_fw_mask],batch_target[clustered_in_generated_mask])
+                    MSE_batch_linear_LOSS = self.loss_fn((normalizing_factor*fw_output_place_holder)[update_step_in_fw_mask],(normalizing_factor*batch_target)[clustered_in_generated_mask])
                 else:
-                    MSE_batch_linear_LOSS = self.loss_fn(x_out_forward_batch[update_step_in_fw_mask],batch_target[clustered_in_generated_mask])
+                    MSE_batch_linear_LOSS = self.loss_fn((normalizing_factor*x_out_forward_batch)[update_step_in_fw_mask],(normalizing_factor*batch_target)[clustered_in_generated_mask])
             else:
                     MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])
 
-
-            for traj_id in range(len(traj_batch)):
-                non_zero_ids_in_FW = update_step_in_fw_mask[traj_id,0,:].nonzero() #Only saves the ids which there was an update step
-                non_zero_ids_in_BW = x_out_batch[traj_id,0,:].nonzero() #filter out all the zeros
-                traj_batch[traj_id].x_estimated_FW = x_out_forward_batch[traj_id,:,non_zero_ids_in_FW].detach()
-                traj_batch[traj_id].x_estimated_BW = x_out_batch[traj_id,:,non_zero_ids_in_BW].detach()
+            if mode == "Test":
+                for traj_id in range(len(traj_batch)):
+                    non_zero_ids_in_FW = update_step_in_fw_mask[traj_id,0,:].nonzero() #Only saves the ids which there was an update step
+                    non_zero_ids_in_BW = x_out_batch[traj_id,0,:].nonzero() #filter out all the zeros
+                    traj_batch[traj_id].x_estimated_FW = x_out_forward_batch[traj_id,:,non_zero_ids_in_FW].detach()
+                    traj_batch[traj_id].x_estimated_BW = x_out_batch[traj_id,:,non_zero_ids_in_BW].detach()
+                    #save new estimations for next runs
+                    if run_num == 0:
+                        traj_batch[traj_id].initial_velocity_estimation = [traj_batch[traj_id].x_estimated_BW[-3:,0].squeeze()]
+                    else:
+                        traj_batch[traj_id].initial_velocity_estimation.append(traj_batch[traj_id].x_estimated_BW[-3:,0].squeeze())
 
             return MSE_batch_linear_LOSS
     

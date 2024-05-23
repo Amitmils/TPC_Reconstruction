@@ -16,8 +16,8 @@ model_path: null #When null takes the default model from the run #
 #Training Scheduler
 wd: 1.0e-3
 first_phase_id: 0
-first_run_id: 0 #WARNING! Currently no support of starting from starting from a different run
-num_runs : 1
+first_run_id: 1 # WARNING CURRENTLY NOT IN USE
+num_runs : 2
 training_scheduler:
   '0':
     mode: FW

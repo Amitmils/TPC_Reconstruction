@@ -87,7 +87,7 @@ sys_model = SystemModel(f, h, system_config.state_vector_size, system_config.obs
 ## Build Neural Networks
 RTSNet_Models: List[RTSNetNN] = list()
 RTSNet_Pipelines: List[Pipeline] = list()
-for i in range(system_config.first_run_id,system_config.num_runs):
+for i in range(0,system_config.num_runs):
    RTSNet_Models.append(RTSNetNN())
    RTSNet_Models[i].NNBuild(sys_model,system_config)
    # ## Train Neural Network
@@ -99,8 +99,12 @@ for i in range(system_config.first_run_id,system_config.num_runs):
    RTSNet_Pipelines[i].setTrainingParams()
    if system_config.train == True:
       [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines[i].NNTrain(sys_model, train_set, CV_set,run_num = i)
-   ## Test Neural Network
-   RTSNet_Pipelines[i].NNTest(sys_model,test_set,run_num = i ,load_model_path=system_config.model_path)
+
+   #Run best model on all sets for velocity estimation for next run, save only performance of Test set
+   if system_config.num_runs > 1:
+      RTSNet_Pipelines[i].NNTest(sys_model,train_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Train")
+      RTSNet_Pipelines[i].NNTest(sys_model,CV_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Val")
+   RTSNet_Pipelines[i].NNTest(sys_model,test_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Test")
 ####################################################################################
 
 
