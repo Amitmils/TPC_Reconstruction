@@ -83,28 +83,23 @@ system_config.logger.info("testset size: %d",len(test_set))
 #######################
 sys_model = SystemModel(f, h, system_config.state_vector_size, system_config.observation_vector_size)# parameters for GT
 
-
 ## Build Neural Networks
-RTSNet_Models: List[RTSNetNN] = list()
-RTSNet_Pipelines: List[Pipeline] = list()
-for i in range(0,system_config.num_runs):
-   RTSNet_Models.append(RTSNetNN())
-   RTSNet_Models[i].NNBuild(sys_model,system_config)
-   # ## Train Neural Network
-   RTSNet_Pipelines.append(Pipeline(strTime, "RTSNet", f"RTSNet{i}",system_config))
-   RTSNet_Pipelines[i].setssModel(sys_model)
-   RTSNet_Pipelines[i].setModel(RTSNet_Models[i])
-   RTSNet_Pipelines[i].logger = system_config.logger
-   RTSNet_Pipelines[i].logger.info(f"Number of trainable parameters for RTSNet{i}: %d",sum(p.numel() for p in RTSNet_Models[i].parameters() if p.requires_grad))
-   RTSNet_Pipelines[i].setTrainingParams()
-   if system_config.train == True:
-      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines[i].NNTrain(sys_model, train_set, CV_set,run_num = i)
 
-   #Run best model on all sets for velocity estimation for next run, save only performance of Test set
-   if system_config.num_runs > 1:
-      RTSNet_Pipelines[i].NNTest(sys_model,train_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Train")
-      RTSNet_Pipelines[i].NNTest(sys_model,CV_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Val")
-   RTSNet_Pipelines[i].NNTest(sys_model,test_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Test")
+RTSNet_Models = RTSNetNN()
+RTSNet_Models.NNBuild(sys_model,system_config)
+# ## Train Neural Network
+RTSNet_Pipelines = Pipeline(strTime, "RTSNet", f"RTSNet",system_config)
+RTSNet_Pipelines.setssModel(sys_model)
+RTSNet_Pipelines.setModel(RTSNet_Models)
+RTSNet_Pipelines.logger = system_config.logger
+RTSNet_Pipelines.logger.info(f"Number of trainable parameters for RTSNet: %d",sum(p.numel() for p in RTSNet_Models.parameters() if p.requires_grad))
+RTSNet_Pipelines.setTrainingParams()
+if system_config.train == True:
+   [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines.NNTrain(sys_model, train_set, CV_set,run_num = 0)
+
+save_path = None
+for i in range(0,system_config.num_runs):
+   save_path = RTSNet_Pipelines.NNTest(sys_model,test_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Test" , save_path=save_path)
 ####################################################################################
 
 

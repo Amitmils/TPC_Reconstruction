@@ -45,7 +45,7 @@ class Pipeline_ERTS:
 
         if self.current_phase !="0":
             prev_phase = str(int(self.current_phase)-1)
-            weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{self.modelName[-1]}P{prev_phase}.pt")
+            weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_P{prev_phase}.pt")
             model_weights = torch.load(weights_path, map_location=self.device)
             self.model.load_state_dict(model_weights)
             self.logger.info(f"Loaded Weights from {os.path.basename(weights_path)}")
@@ -77,7 +77,7 @@ class Pipeline_ERTS:
 
     def switch_to_next_phase(self):
         #Load best weights from phase
-        weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{self.modelName[-1]}P{self.current_phase}.pt")
+        weights_path = os.path.join(self.config.path_results,"temp models",f"best-model-weights_P{self.current_phase}.pt")
         model_weights = torch.load(weights_path, map_location=self.device)
         self.model.load_state_dict(model_weights)
         #continue to next phase
@@ -194,9 +194,9 @@ class Pipeline_ERTS:
                     self.MSE_cv_idx_opt = ti
                     best_model = self.model.state_dict().copy()
                     
-                    torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{run_num}P{self.current_phase}.pt"))
+                    torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_P{self.current_phase}.pt"))
                     if int(self.current_phase) == self.total_num_phases-1:
-                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{run_num}FINAL.pt")) 
+                        torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_FINAL.pt")) 
 
             # cv_set[0].x_estimated_BW = x_out_cv[0].clone().detach()
             # cv_set[0].x_estimated_FW = x_out_cv_forward[0].clone().detach()
@@ -207,7 +207,7 @@ class Pipeline_ERTS:
             ########################
 
             self.logger.info(f"Time : {time.time()-start}")
-            self.logger.info(f"R{run_num}P{self.current_phase} {ti} MSE Training : {round(self.MSE_train_dB_epoch[ti].item(),3)} [dB] MSE Validation : {round(self.MSE_cv_dB_epoch[ti].item(),3)} [dB]")
+            self.logger.info(f"P{self.current_phase} {ti} MSE Training : {round(self.MSE_train_dB_epoch[ti].item(),3)} [dB] MSE Validation : {round(self.MSE_cv_dB_epoch[ti].item(),3)} [dB]")
 
             if (ti > 0):
                 d_train = self.MSE_train_dB_epoch[ti] - self.MSE_train_dB_epoch[ti - 1]
@@ -215,7 +215,7 @@ class Pipeline_ERTS:
                 self.logger.info(f"diff MSE Training : {round(d_train.item(),3)} [dB] diff MSE Validation : {round(d_cv.item(),3)} [dB]")
             self.logger.info(f"Optimal idx: {self.MSE_cv_idx_opt} Optimal : {round(self.MSE_cv_dB_opt.item(),3)} [dB]")
 
-        torch.save(best_model, os.path.join(self.config.path_results,"temp models",f"best-model-weights_R{run_num}FINAL.pt"))
+        torch.save(best_model, os.path.join(self.config.path_results,"temp models",f"best-model-weights_FINAL.pt"))
         return [self.MSE_cv_linear_epoch, self.MSE_cv_dB_epoch, self.MSE_train_linear_epoch, self.MSE_train_dB_epoch]
 
     def plot_training_summary(self,output_path,run_num):
@@ -238,9 +238,9 @@ class Pipeline_ERTS:
         plt.ylabel('MSE [dB]')
         plt.title("Training Losses", y=1.09)
         plt.legend()
-        plt.savefig(os.path.join(output_path,f"Learning_Curve_R{run_num}.png"))
+        plt.savefig(os.path.join(output_path,f"Learning_Curve_.png"))
 
-    def NNTest(self, SysModel, test_set,run_num,set_name,load_model_path=None):
+    def NNTest(self, SysModel, test_set,run_num,set_name,load_model_path=None,save_path=None):
 
         assert len(test_set), "Test set size is 0!"
 
@@ -251,8 +251,8 @@ class Pipeline_ERTS:
             self.logger.info(f"Loading Model from path {load_model_path}")
             model_weights = torch.load(load_model_path, map_location=self.device) 
         else:
-            self.logger.info(f"Loading Model best-model-weights_R{run_num}FINAL")
-            load_model_path = os.path.join(self.config.path_results,"temp models",f'best-model-weights_R{run_num}FINAL.pt')
+            self.logger.info(f"Loading Model best-model-weights_FINAL")
+            load_model_path = os.path.join(self.config.path_results,"temp models",f'best-model-weights_FINAL.pt')
 
        # Load model weights with a with statement
         with open(load_model_path, 'rb') as f:
@@ -265,22 +265,33 @@ class Pipeline_ERTS:
         self.model.eval()
         # Init Hidden State
         self.model.init_hidden()
-        torch.no_grad()
         with torch.no_grad():
+            if run_num == 0 : 
+                set = test_set
+            else:
+                #rerun only on low energies
+                set_indices = [i for i, traj in enumerate(test_set) if self.config.max_energy_to_rerun > get_energy_from_velocities(traj.initial_velocity_estimation[-1][0],
+                                                                                                                   traj.initial_velocity_estimation[-1][1],
+                                                                                                                   traj.initial_velocity_estimation[-1][2])]
+                set = [test_set[i] for i in set_indices]
             start = time.time()
-            self.MSE_test_linear_avg = self.calculate_loss(test_set,SysModel,"Test",run_num)
+            self.MSE_test_linear_avg = self.calculate_loss(set,SysModel,"Test",run_num)
+
             end = time.time()
             t = end - start
 
         # Average
         self.MSE_test_dB_avg = 10 * torch.log10(self.MSE_test_linear_avg)
-        self.logger.info(f"{self.modelName} - MSE Test: {self.MSE_test_dB_avg.item()}[dB]")
+        self.logger.info(f"Final Eval {self.modelName} - MSE {set_name}: {self.MSE_test_dB_avg.item()}[dB]")
         self.logger.info("Inference Time: %d", t)
 
         if set_name == "Test":
             today = datetime.today()
             now = datetime.now()
-            run_path = os.path.join(self.config.path_results,"runs",f"{today.strftime('D%d_M%m')}_{now.strftime('h%H_m%M')}")
+            if save_path is None:
+                run_path = os.path.join(self.config.path_results,"runs",f"{today.strftime('D%d_M%m')}_{now.strftime('h%H_m%M')}")
+            else:
+                run_path = save_path
             run_models_path = os.path.join(run_path,"models")
             run_results_path = os.path.join(run_path,"results")
             os.makedirs(run_models_path,exist_ok=True)
@@ -293,7 +304,7 @@ class Pipeline_ERTS:
             except:
                 self.logger.info("plot_training_summary Failed")
 
-        return [self.MSE_test_linear_avg, self.MSE_test_dB_avg, t]
+        return run_path
 
     def calculate_loss(self,traj_batch,SysModel,mode,run_num):
             
@@ -431,9 +442,9 @@ class Pipeline_ERTS:
                     if self.loss == 'velocity':
                         #Loss on the velocities of the first cluster
                         FTT_BW_mask_loss[id_in_batch] = False
-                        FTT_BW_mask_loss[id_in_batch,-3:,traj_batch[id_in_batch].t[0]] = True 
+                        FTT_BW_mask_loss[id_in_batch,[SS_VARIABLE.Vx.value,SS_VARIABLE.Vy.value,SS_VARIABLE.Vz.value],traj_batch[id_in_batch].t[0]] = True 
                         est_BW_mask_loss[id_in_batch] = False
-                        est_BW_mask_loss[id_in_batch,-3:,0] = True
+                        est_BW_mask_loss[id_in_batch,[SS_VARIABLE.Vx.value,SS_VARIABLE.Vy.value,SS_VARIABLE.Vz.value],0] = True
                     elif self.loss == 'all':
                         #Loss on all points in trajectory
                         FTT_BW_mask_loss[id_in_batch,:,relevant_ids_FTT] = True 
@@ -462,7 +473,7 @@ class Pipeline_ERTS:
                                                                                     smoother_x_tplus2 = torch.unsqueeze(x_out_batch[batch_ids, :, updates_step_map[:,k-2]],2)),2)[~end_of_traj,:]
             #Compute  loss
             if self.SYSTEM_MODE == System_Mode.FW_ONLY:
-                normalizing_factor = (1/torch.sqrt(clustered_traj_lengths_in_batch)).view(-1,1,1) #normalize by trajectory length
+                normalizing_factor = 1#(clustered_traj_lengths_in_batch/torch.sum(clustered_traj_lengths_in_batch)).view(-1,1,1) #normalize by trajectory length
                 if self.spoon_feeding: #Till the KNET warms up a bit
                     MSE_batch_linear_LOSS = self.loss_fn((normalizing_factor*fw_output_place_holder)[update_step_in_fw_mask],(normalizing_factor*batch_target)[clustered_in_generated_mask])
                 else:
@@ -481,6 +492,5 @@ class Pipeline_ERTS:
                         traj_batch[traj_id].initial_velocity_estimation = [traj_batch[traj_id].x_estimated_BW[-3:,0].squeeze()]
                     else:
                         traj_batch[traj_id].initial_velocity_estimation.append(traj_batch[traj_id].x_estimated_BW[-3:,0].squeeze())
-
             return MSE_batch_linear_LOSS
     

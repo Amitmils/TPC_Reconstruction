@@ -602,11 +602,11 @@ def add_noise_to_list_of_trajectories(traj_list,mean=0,variance=0.1):
 
 def error_estimations(type,real_energy,real_theta,real_phi,estimation):
     est_data = {
-           f"MP phi {type}" : round(torch.abs(100*(estimation['initial_phi']-real_phi)/real_phi).item(),2),
-           f"MP energy {type}" : round(torch.abs(100*(estimation['init_energy']-real_energy)/real_energy).item(),2),
-           f"MP theta {type}" : round(torch.abs(100*(estimation['inital_theta']-real_theta)/real_theta).item(),2),
-           f"SP energy {type}" : round(torch.abs(100*(estimation['inital_energy_point']-real_energy)/real_energy).item(),2) if type!="obs" else "-", #no SP energy estimation in OBS
-           f"SP theta {type}" : round(torch.abs(100*(estimation['inital_theta_point']-real_theta)/real_theta).item(),2)
+           f"MP phi {type}" : round((100*(estimation['initial_phi']-real_phi)/real_phi).item(),2),
+           f"MP energy {type}" : round((100*(estimation['init_energy']-real_energy)/real_energy).item(),2),
+           f"MP theta {type}" : round((100*(estimation['inital_theta']-real_theta)/real_theta).item(),2),
+           f"SP energy {type}" : round((100*(estimation['inital_energy_point']-real_energy)/real_energy).item(),2) if type!="obs" else "-", #no SP energy estimation in OBS
+           f"SP theta {type}" : round((100*(estimation['inital_theta_point']-real_theta)/real_theta).item(),2)
         }
     return est_data
 def estimation_summary(traj_set,output_path,run_num):

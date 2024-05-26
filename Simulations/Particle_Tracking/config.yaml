@@ -9,15 +9,15 @@ test_set_size: 1000
 batch_size: 50
 interpolation_points_to_add : 0 # number of points to add between every 2 clusters for backward pass
 force_batch: [] #For debug
-train: true
+train: false
 test_mode: FW + BW
-model_path: null #When null takes the default model from the run #
+model_path: Simulations/Particle_Tracking/runs/D25_M05_h08_m36/models/best-model-weights_FINAL.pt #When null takes the default model from the run #
 
 #Training Scheduler
 wd: 1.0e-3
 first_phase_id: 0
-first_run_id: 1 # WARNING CURRENTLY NOT IN USE
-num_runs : 2
+num_runs : 3 #Runs in Final Eval
+max_energy_to_rerun: 1.5 #All trajectories with estimated energy under this value will be rerun 
 training_scheduler:
   '0':
     mode: FW
@@ -67,5 +67,5 @@ output_dim_mult_RTSNet: 40
 # #Paths
 
 path_results: Simulations/Particle_Tracking
-Dataset_path: Simulations/Particle_Tracking/data/point5-3Mev_Dataset_100points_17_05_24__13_21.pt # Train / CV
-test_set_path: Simulations/Particle_Tracking/data/point5-3Mev_Dataset_100points_17_05_24__13_21.pt # Test
+Dataset_path: Simulations/Particle_Tracking/data/point4-3Mev_Dataset_150points_19_05_24__20_25.pt # Train / CV
+test_set_path: Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt # Test
