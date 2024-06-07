@@ -63,7 +63,7 @@ model = TransformerEncoder(input_size, hidden_size, num_layers, output_size)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-if False:
+if True:
     # Training loop
     num_epochs = 1000
     best_loss = float('inf')  # Initialize best loss to infinity
@@ -74,7 +74,8 @@ if False:
         optimizer.zero_grad()
         train_input, train_lengths ,train_target = get_batch(train_set)
         train_outputs = model(train_input)
-        train_loss = criterion(train_outputs, train_target)
+        # train_loss = criterion(train_outputs, train_target)
+        train_loss = criterion(get_energy_from_velocities(train_outputs[:,0],train_outputs[:,1],train_outputs[:,2]), get_energy_from_velocities(train_target[:,0],train_target[:,1],train_target[:,2]))
         train_loss.backward()
         optimizer.step()
 
@@ -82,16 +83,18 @@ if False:
         model.eval()
         CV_input, CV_lengths ,CV_target = get_batch(CV_set)
         CV_outputs = model(CV_input)
-        CV_loss = criterion(CV_outputs, CV_target)
+        # CV_loss = criterion(CV_outputs, CV_target)
+        CV_loss = criterion(get_energy_from_velocities(CV_outputs[:,0],CV_outputs[:,1],CV_outputs[:,2]), get_energy_from_velocities(CV_target[:,0],CV_target[:,1],CV_target[:,2]))
+
 
 
         # Print average loss for the epoch
-        print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {10*torch.log(train_loss)} [dB] , CV Loss {10*torch.log(CV_loss)} ")
+        print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {10*torch.log10(train_loss)} [dB] , CV Loss {10*torch.log10(CV_loss)} ")
 
         if CV_loss < best_loss:
             best_loss = CV_loss
             torch.save(model.state_dict(), 'Transformer_best_model.pth')
-            print(f"Model saved with loss: {10*torch.log(best_loss)} [dB]")
+            print(f"Model saved with loss: {10*torch.log10(best_loss)} [dB]")
 
     print("Training finished.")
 
@@ -111,13 +114,13 @@ real_energy = list()
 for i in range(outputs.shape[0]):
     estimated_energy = get_energy_from_velocities(outputs[i,0],outputs[i,1],outputs[i,2])
     real_energy.append(eval_set[i].init_energy)
-    TransformerEncoder_estimated_energy_error.append(100*torch.abs(real_energy[-1]-estimated_energy)/real_energy[-1])
+    TransformerEncoder_estimated_energy_error.append(100*(estimated_energy-real_energy[-1])/real_energy[-1])
     _,est_para = get_mx_0(eval_set[i].y.squeeze(-1))
-    MP_estimated_energy_error.append(100*torch.abs(real_energy[-1]-est_para['init_energy'])/real_energy[-1])
+    MP_estimated_energy_error.append(100*(est_para['init_energy']  -real_energy[-1])/real_energy[-1])
 
 plt.scatter(real_energy,MP_estimated_energy_error,s=2,label="MP Estimation")
 plt.scatter(real_energy,TransformerEncoder_estimated_energy_error,s=2,label="TransformerEncoder Estimation")
-plt.title("Energy Error Estimation")
+plt.title(f"Energy Error Estimation\nAbs Avg {torch.tensor(TransformerEncoder_estimated_energy_error).abs().mean()}, STD {torch.tensor(TransformerEncoder_estimated_energy_error).std()}")
 plt.xlabel("Energy [MeV]")
 plt.ylabel("Error [%]")
 plt.legend()

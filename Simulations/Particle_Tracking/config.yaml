@@ -6,17 +6,20 @@ observation_vector_size: 3
 train_set_size: 1000
 CV_set_size: 1000
 test_set_size: 1000
-batch_size: 50
-interpolation_points_to_add : 0 # number of points to add between every 2 clusters for backward pass
+batch_size: 1000
 force_batch: [] #For debug
-train: false
+train : true #Master flag for training
+train_RTS: false
+train_BiRNN: True
+lambda_loss : 0
 test_mode: FW + BW
-model_path: Simulations/Particle_Tracking/runs/D25_M05_h08_m36/models/best-model-weights_FINAL.pt #When null takes the default model from the run #
+RTS_model_path: null # Simulations/Particle_Tracking/runs/D19_M05_h15_m13/models/best-model-weights_FINAL.pt #When null takes the default model from the run #
+BiRNN_model_path: null #default is 
 
-#Training Scheduler
+#RTS Training Scheduler
 wd: 1.0e-3
-first_phase_id: 0
-num_runs : 3 #Runs in Final Eval
+first_phase_id: 5
+num_runs : 1 #Runs in Final Eval
 max_energy_to_rerun: 1.5 #All trajectories with estimated energy under this value will be rerun 
 training_scheduler:
   '0':
@@ -27,24 +30,27 @@ training_scheduler:
   '1':
     mode: FW
     lr: 1.0e-3
-    n_epochs: 20
+    n_epochs: 10
   '2':
     mode: BW
     lr: 1.0e-3
-    n_epochs: 25
-    loss: velocity
+    n_epochs: 20
+    loss: all
   '3':
     mode: BW
-    lr: 5.0e-4
+    lr: 4.5e-4
     n_epochs: 20
-    loss: velocity
+    loss: all
   '4':
     mode: FW + BW
-    lr: 1.0e-4
+    lr: 5.0e-4
     n_epochs: 20
-    loss: velocity
-
-
+    loss: all
+  '5':
+    mode: FW + BW + HEAD
+    lr: 1.0e-4
+    n_epochs: 100
+    loss: all
 ################
 ## loss types ##
 ################
@@ -52,6 +58,12 @@ training_scheduler:
 # velocity - loss only on the velocities of the first state vector
 # energy - loss only on the intial energy trajectory
 # interpolation - loss only on the added interpolated space state vectors
+
+
+#BiRNN Training
+
+BiRNN_lr : 1.0e-5
+BiRNN_n_epochs : 3000
 
 
 
@@ -67,5 +79,5 @@ output_dim_mult_RTSNet: 40
 # #Paths
 
 path_results: Simulations/Particle_Tracking
-Dataset_path: Simulations/Particle_Tracking/data/point4-3Mev_Dataset_150points_19_05_24__20_25.pt # Train / CV
-test_set_path: Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt # Test
+Dataset_path: Simulations/Particle_Tracking/data/point4-3Mev_Dataset_280points_25_05_24__09_07.pt
+test_set_path: Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt #Simulations/Particle_Tracking/data/3-40Mev_Dataset_1000points_25_05_24__15_39.pt #Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt # Test

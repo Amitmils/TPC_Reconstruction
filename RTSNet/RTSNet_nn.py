@@ -195,6 +195,7 @@ class RTSNetNN(KalmanNetNN):
         # updating hidden state of the Sigma-GRU
         self.h_Sigma_bw = out_FC2
 
+        self.feature_map = torch.cat((self.h_Sigma_bw.squeeze(0).detach(), self.h_Q_bw.squeeze(0).detach()), dim=1)
         return out_FC1
 
     ###############

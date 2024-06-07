@@ -50,7 +50,11 @@ class SS_VARIABLE(enum.Enum):
 class System_Mode(enum.Enum):
     FW_ONLY = "FW"
     BW_ONLY = "BW"
+    HEAD_ONLY = "HEAD"
     FW_BW= "FW + BW"
+    BW_HEAD= "BW + HEAD"
+    FW_BW_HEAD= "FW + BW + HEAD"
+
 
 class Trajectory_Source(enum.Enum):
     Amit_Simulated = 0
@@ -631,16 +635,19 @@ def estimation_summary(traj_set,output_path,run_num):
             traj_data = {**traj_data,**error_estimations(type,real_energy,real_theta,real_phi,est)}
             if type == 'gen':
                 est_theta = torch.arctan2(torch.sqrt(traj_set[traj_id].generated_traj[0,1]**2 + traj_set[traj_id].generated_traj[1,1]**2),traj_set[traj_id].generated_traj[2,1])
-                traj_data[f"SP theta {type}"] = round(torch.abs(100*(real_theta-est_theta)/est_theta).item(),2),
+                traj_data[f"SP theta {type}"] = round(torch.abs(100*(real_theta-est_theta)/real_theta).item(),2)
+        if hasattr(traj_set[traj_id], 'BiRNN_output'):
+            birnn_energy = get_energy_from_velocities(traj_set[traj_id].BiRNN_output[0],traj_set[traj_id].BiRNN_output[1],traj_set[traj_id].BiRNN_output[2])
+            traj_data[f"BiRNN Est"] = round(torch.abs(100*(real_energy-birnn_energy)/real_energy).item(),2)
         set_summary.append(traj_data)
 
     df = pd.DataFrame(set_summary)
     df.set_index('ID', inplace=True)
     plt.figure()
-    plt.scatter(df['energy'],df['MP energy obs'],s=5,label="MP Energy Obs")
-    plt.scatter(df['energy'],df['SP energy bw'],s=5,label="SP Energy BW")
+    plt.scatter(df['energy'],df['MP energy obs'],s=2,label="MP Energy Obs")
+    plt.scatter(df['energy'],df['SP energy bw'],s=2,label="SP Energy BW")
     plt.legend()
-    plt.title("Energy Error Esimtation %")
+    plt.title(f"Energy Error Esimtation %\nAbs Avg {np.abs(df['SP energy bw']).mean()}, STD {np.std(df['SP energy bw'])}")
     plt.xlabel("Energy [MeV]")
     plt.ylabel("Error [%]")
     plt.grid()

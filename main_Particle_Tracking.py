@@ -6,19 +6,18 @@ if str(script_dir) not in sys.path:
 import torch
 from Simulations.Extended_sysmdl import SystemModel
 import os
+import warnings
 from Pipelines.Pipeline_ERTS import Pipeline_ERTS as Pipeline
 from Pipelines.Pipeline_concat_models import Pipeline_twoRTSNets
 from datetime import datetime
 from RTSNet.RTSNet_nn import RTSNetNN
 from Tools.utils import *
-from typing import List
-
-
-
+from Tools.Other_Methods.BiRNN import BiRNNPipeLine
 
 system_config= CONFIG("Simulations/Particle_Tracking/config.yaml")
 system_config.logger = setup_logger(os.path.join(system_config.path_results,"temp_log.log")) #this logger will be in config and in Pipeline itself
 system_config.logger.info("Pipeline Start")
+# warnings.simplefilter("error", UserWarning)
 
 ################
 ### Get Time ###
@@ -93,13 +92,22 @@ RTSNet_Pipelines.setssModel(sys_model)
 RTSNet_Pipelines.setModel(RTSNet_Models)
 RTSNet_Pipelines.logger = system_config.logger
 RTSNet_Pipelines.logger.info(f"Number of trainable parameters for RTSNet: %d",sum(p.numel() for p in RTSNet_Models.parameters() if p.requires_grad))
+BiRNN_Pipeline = BiRNNPipeLine(mode="bw",output_path=os.path.join(system_config.path_results,"temp models"),lr = system_config.BiRNN_lr,logger=system_config.logger)
+RTSNet_Pipelines.setHeadPipeline(BiRNN_Pipeline)
 RTSNet_Pipelines.setTrainingParams()
 if system_config.train == True:
-   [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines.NNTrain(sys_model, train_set, CV_set,run_num = 0)
+   if system_config.train_RTS:
+      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines.NNTrain(sys_model, train_set, CV_set,run_num = 0)
+   if system_config.train_BiRNN:
+      print(f"Train Set in Eval")
+      RTSNet_Pipelines.NNTest(sys_model,train_set,run_num = 0 ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "train")
+      print(f"CV Set in Eval")
+      RTSNet_Pipelines.NNTest(sys_model,CV_set,run_num = 0 ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "CV")
+      # RTSNet_Pipelines.head_pipeline.train(train_set=train_set,CV_set=CV_set,n_epochs=system_config.BiRNN_n_epochs)
 
-save_path = None
-for i in range(0,system_config.num_runs):
-   save_path = RTSNet_Pipelines.NNTest(sys_model,test_set,run_num = i ,load_model_path=system_config.model_path,set_name = "Test" , save_path=save_path)
+save_path = RTSNet_Pipelines.NNTest(sys_model,test_set,run_num = 0 ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Test")
+
+torch.save([train_set,CV_set,test_set],"Simulations/Particle_Tracking/data/FC_PoC_Data_X.pt")
 ####################################################################################
 
 
