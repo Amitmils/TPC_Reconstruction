@@ -8,13 +8,28 @@ import torch.nn as nn
 import torch.optim as optim
 from Tools.utils import *
 
+if torch.cuda.is_available():
+  device = torch.device('cuda')
+  print("Using GPU:", torch.cuda.get_device_name(torch.cuda.current_device()))
+  torch.set_default_dtype(torch.float32)  # Set default data type
+  torch.set_default_device('cuda')  # Set default device (optional)
+  #Setting default device to 'cuda' causes some problems with the spline functions that try to turn tensors into numpy inside the functions
+  #therefore, as a WA i set this to cpu before those functions. These functions dont need to be backproped through
+else:
+    device = torch.device('cpu')
+    print("Using CPU")
+
 class BiRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size):
+    def __init__(self, input_size, hidden_size, num_layers, output_size,is_bidirectional = True,many_to_many=False):
         super(BiRNN, self).__init__()
+        self.is_bidirection = is_bidirectional
+        self.many_to_many = many_to_many
+        self.hidden_layer_multiplier = 2 if self.is_bidirection else 1
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True,bidirectional=True)
-        self.fc = nn.Linear(hidden_size*2, output_size)
+        self.gru = nn.GRU(input_size, hidden_size, num_layers, batch_first=True,bidirectional=self.is_bidirection)
+        self.fc = nn.Linear(hidden_size*self.hidden_layer_multiplier, output_size)
+
         self.BiRNN_param = []
         for _,param in self.named_parameters():
             self.BiRNN_param.append(param)
@@ -27,79 +42,108 @@ class BiRNN(nn.Module):
         # Sort input sequences by length
         lengths, sort_idx = torch.sort(lengths, descending=True)
         x = x[sort_idx]
-        
+
+
         # Pack padded sequence
-        x = nn.utils.rnn.pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=True)
-        
+        x = nn.utils.rnn.pack_padded_sequence(x, lengths.cpu(), batch_first=True, enforce_sorted=True)
+
         # Initialize hidden state
-        h0 = torch.zeros(self.num_layers *2, x.batch_sizes[0], self.hidden_size).to(x.data.device)
-        
+        h0 = torch.zeros(self.num_layers * self.hidden_layer_multiplier, x.batch_sizes[0], self.hidden_size).to(x.data.device)
+
         # Forward pass through GRU
         out, _ = self.gru(x, h0)
-        
+
         # Unpack packed sequence
         out, _ = nn.utils.rnn.pad_packed_sequence(out, batch_first=True)
-        
-        # Gather the last output for each sequence
-        idx = (lengths - 1).view(-1, 1).expand(out.size(0), out.size(2)).unsqueeze(1)
-        out = out.gather(1, idx).squeeze(1)
-        
+
+        if not(self.many_to_many):
+            # Gather the last output for each sequence
+            idx = (lengths - 1).view(-1, 1).expand(out.size(0), out.size(2)).unsqueeze(1)
+            out = out.gather(1, idx).squeeze(1)
+
         # Pass through linear layer
         out = self.fc(out)
-
         # Reorder the output to match the original order of the input sequences
         _, unsort_idx = torch.sort(sort_idx)
         out = out[unsort_idx]
         return out
 
 class BiRNNPipeLine():
-    def __init__(self,mode,output_path="Simulations/Particle_Tracking/temp models",lr=1e-3,logger=None) -> None:
+    def __init__(self,mode,output_path="Models",lr=8e-4,logger=None,device=device) -> None:
         self.mode = mode
         self.logger = logger
         self.output_path = output_path
+        self.device = device
         if self.mode == "obs":
             input_size = 3  # size of each element in the sequence
             hidden_size = 20  # size of hidden state
-            num_layers = 10  # number of layers in the GRU   
-            output_size = 3  # size of the output
-        elif self.mode == "fmap":
-            input_size = 72  # size of each element in the sequence
-            hidden_size = 128  # size of hidden state
             num_layers = 10  # number of layers in the GRU
-            output_size = 3  # size of the output
+        elif self.mode == "fmap" or self.mode == "bw_gain":
+            input_size = 42  # size of each element in the sequence
+            hidden_size = 20  # size of hidden state
+            num_layers = 10  # number of layers in the GRU
+        elif self.mode == "bw_dx" or self.mode == "bw_inov":
+            input_size = 12  # size of each element in the sequence
+            hidden_size = 20  # size of hidden state
+            num_layers = 10  # number of layers in the GRU
+        # elif self.mode == "bw_fw_gain":
+        #     input_size = 21  # size of each element in the sequence
+        #     hidden_size = 20  # size of hidden state
+        #     num_layers = 10  # number of layers in the GRU
         else:
             input_size = 6  # size of each element in the sequence
             hidden_size = 20  # size of hidden state
             num_layers = 10  # number of layers in the GRU
-            output_size = 3  # size of the output
-        self.model = BiRNN(input_size, hidden_size, num_layers, output_size)
-        self.criterion = nn.MSELoss()
+        self.output_size = 3 # size of the output
+        self.model = BiRNN(input_size, hidden_size, num_layers, self.output_size)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+
+    def criterion(self,train_output,target):
+        if self.output_size == 3:
+          train_output = get_energy_from_velocities(train_output[:,0],train_output[:,1],train_output[:,2])
+        target = get_energy_from_velocities(target[:,0],target[:,1],target[:,2])
+
+        mse_loss = nn.MSELoss()
+        # return ((((train_output-target).abs())/target)).mean()
+        return mse_loss(train_output,target)
+        # return ((((train_output-target)**2)/target)).mean()
+
+
 
     def parse_data(self,set):
         batch = []
         lengths = []
         target = []
         for traj in set:
-            seq_length = traj.traj_length
-            if self.mode == "obs": 
-                sequence = traj.y.squeeze().T #GRU expected Sequence_Length x Input_Size
-            elif self.mode == "bw":
-                sequence = traj.x_estimated_BW.squeeze().T
-            elif self.mode == "gen":
-                sequence = traj.generated_traj.squeeze().T
-            elif self.mode == "real":
-                sequence = traj.x_real.squeeze().T
-            elif self.mode == "fw":
-                sequence = traj.x_estimated_FW.squeeze().T
-            elif self.mode == "fmap":
-                sequence = torch.cat((traj.bw_fmap.squeeze().T, traj.x_estimated_BW.squeeze().T), dim=1)
-            target.append(traj.generated_traj[-3:,0].squeeze())
-            batch.append(sequence)
-            lengths.append(seq_length)
+          seq_length = traj.traj_length
+          if self.mode == "obs":
+              sequence = traj.y.squeeze().T #GRU expected Sequence_Length x Input_Size
+          elif self.mode == "bw":
+              sequence = traj.x_estimated_BW.squeeze().T
+          elif self.mode == "gen":
+              sequence = traj.generated_traj.squeeze().T
+          elif self.mode == "real":
+              sequence = traj.x_real.squeeze().T
+          elif self.mode == "fw":
+              sequence = traj.x_estimated_FW.squeeze().T
+          elif self.mode == "bw_dx":
+              sequence = torch.cat((traj.bw_dx.squeeze().T, traj.x_estimated_BW.squeeze().T), dim=1)
+          elif self.mode == "bw_inov":
+              sequence = torch.cat((traj.bw_inov.squeeze().T, traj.x_estimated_BW.squeeze().T), dim=1)
+          elif self.mode == "fmap":
+              sequence = torch.cat((traj.fmap.squeeze().T[:,:36], traj.x_estimated_BW.squeeze().T), dim=1)
+          elif self.mode == "bw_gain":
+              sequence = torch.cat((traj.bw_gain.squeeze().T, traj.x_estimated_BW.squeeze().T), dim=1)
+          # elif self.mode == "bw_fw_gain":
+          #     sequence = torch.cat((traj.fw_gain.squeeze().T, traj.x_estimated_BW.squeeze()[:3,:].T), dim=1)
+          elif self.mode == "birnn_smoother":
+              sequence = traj.BiRNN_Smoother_output.squeeze().T
+          target.append(traj.generated_traj[-3:,0].squeeze())
+          batch.append(sequence)
+          lengths.append(seq_length)
         padded_batch = nn.utils.rnn.pad_sequence(batch, batch_first=True)
-        return padded_batch, torch.tensor(lengths), torch.stack(target)
-    
+        return padded_batch.to(device), torch.tensor(lengths), torch.stack(target).to(device)
+
     def pipeline_print(self,s):
         if self.logger is None:
             print(s)
@@ -108,7 +152,7 @@ class BiRNNPipeLine():
     def get_one_epoch_loss(self,set):
         input, lengths ,target = self.parse_data(set)
         output = self.model(input, lengths)
-        return self.criterion(get_energy_from_velocities(output[:,0],output[:,1],output[:,2]), get_energy_from_velocities(target[:,0],target[:,1],target[:,2]))
+        return self.criterion(output, target)
 
     def train(self,train_set=None,CV_set=None,n_epochs=3000,file_suffix="FINAL",data_path = None):
         if data_path is not None:
@@ -122,17 +166,16 @@ class BiRNNPipeLine():
             train_input, train_lengths ,train_target = self.parse_data(train_set)
             train_outputs = self.model(train_input, train_lengths)
             # train_loss = criterion(train_outputs, train_target)
-            train_loss = self.criterion(get_energy_from_velocities(train_outputs[:,0],train_outputs[:,1],train_outputs[:,2]), get_energy_from_velocities(train_target[:,0],train_target[:,1],train_target[:,2]))
+            train_loss = self.criterion(train_outputs, train_target)
 
             train_loss.backward()
             self.optimizer.step()
-
+            CV_input, CV_lengths ,CV_target = self.parse_data(CV_set)
             #CV
             self.model.eval()
-            CV_input, CV_lengths ,CV_target = self.parse_data(CV_set)
             CV_outputs = self.model(CV_input, CV_lengths)
             # CV_loss = criterion(CV_outputs, CV_target)
-            CV_loss = self.criterion(get_energy_from_velocities(CV_outputs[:,0],CV_outputs[:,1],CV_outputs[:,2]), get_energy_from_velocities(CV_target[:,0],CV_target[:,1],CV_target[:,2]))
+            CV_loss = self.criterion(CV_outputs, CV_target)
 
             # Print average loss for the epoch
             self.pipeline_print(f"Epoch [{epoch+1}/{n_epochs}], Train Loss: {10*torch.log10(train_loss)} [dB] , CV Loss {10*torch.log10(CV_loss)} ")
@@ -141,52 +184,151 @@ class BiRNNPipeLine():
                 best_loss = CV_loss
                 torch.save(self.model.state_dict(), os.path.join(self.output_path,f'best-BiRNN_model_{file_suffix}.pt'))
                 self.pipeline_print(f"Model saved with loss: {10*torch.log10(best_loss)} [dB]")
-    
-    def eval(self,eval_set,load_model_path=None):
+        self.pipeline_print(f"Best Loss :  {10*torch.log10(best_loss)} [dB]")
+
+    def eval(self,eval_set,load_model_path=None,file_suffix="FINAL"):
         if load_model_path is None:
-            load_model_path = os.path.join(self.output_path, 'best-BiRNN_model_FINAL.pt')
-        state_dict = torch.load(load_model_path)
+            load_model_path = os.path.join(self.output_path, f'best-BiRNN_model_{file_suffix}.pt')
+        state_dict = torch.load(load_model_path,map_location=device)
         self.pipeline_print(f"Loading BiRNN Model {load_model_path}")
         self.model.load_state_dict(state_dict)
         self.model.eval()
         input_batch, input_lengths , target = self.parse_data(eval_set)
         outputs = self.model(input_batch, input_lengths).detach()
+        loss = self.criterion(outputs, target)
+        self.pipeline_print(f"Loss : {10*torch.log10(loss)}")
         #add results to set
         for i in range(len(eval_set)):
             eval_set[i].BiRNN_output = outputs[i]
-        
-        return self.criterion(get_energy_from_velocities(outputs[:,0],outputs[:,1],outputs[:,2]), get_energy_from_velocities(target[:,0],target[:,1],target[:,2]))
+        return 10*torch.log10(loss)
 
-    def plot_data(self,eval_set,save_path):
+    def plot_data(self,eval_set,save_path,suffix=None):
         BiRNN_estimated_energy_error = list()
         MP_estimated_energy_error = list()
         real_energy = list()
 
         for i in range(len(eval_set)):
-            estimated_energy = get_energy_from_velocities(eval_set[i].BiRNN_output[0],eval_set[i].BiRNN_output[1],eval_set[i].BiRNN_output[2])
+            estimated_energy = get_energy_from_velocities(eval_set[i].BiRNN_output[0],eval_set[i].BiRNN_output[1],eval_set[i].BiRNN_output[2]) if self.output_size == 3 else eval_set[i].BiRNN_output.cpu()
             real_energy.append(eval_set[i].init_energy)
-            BiRNN_estimated_energy_error.append(100*(estimated_energy-real_energy[-1])/real_energy[-1])
-            _,est_para = get_mx_0(eval_set[i].y.squeeze(-1))
-            MP_estimated_energy_error.append(100*(est_para['init_energy']-real_energy[-1])/real_energy[-1])
-
-        plt.scatter(real_energy,MP_estimated_energy_error,s=2,label="MP Estimation")
+            BiRNN_estimated_energy_error.append((100*(estimated_energy-real_energy[-1])/real_energy[-1]).abs().cpu())
+        plt.figure()
         plt.scatter(real_energy,BiRNN_estimated_energy_error,s=2,label="BiRNN Estimation")
-        plt.title(f"Energy Error Estimation {self.mode}\nAbs Avg {torch.tensor(BiRNN_estimated_energy_error).abs().mean()}, STD {torch.tensor(BiRNN_estimated_energy_error).std()}")
+        plt.title(f"Energy Error Estimation {self.mode}\nAbs Avg {torch.tensor(BiRNN_estimated_energy_error).mean()}, STD {torch.tensor(BiRNN_estimated_energy_error).std()}")
         plt.xlabel("Energy [MeV]")
         plt.ylabel("Error [%]")
         plt.legend()
         plt.grid()
-        plt.savefig(os.path.join(save_path,f"BiRNN_Head_Output_{self.mode}.png"))
+        save_path = os.path.join(save_path,f"BiRNN_Head_Output_{self.mode if suffix is None else suffix}.png")
+        if os.path.exists(save_path):
+          os.remove(save_path)
+        plt.savefig(save_path)
+        return torch.tensor(BiRNN_estimated_energy_error).abs().mean(),torch.tensor(BiRNN_estimated_energy_error).std()
+
+    def plot_data_multiple_BiRNN(self, eval_sets_list, save_path,suffix=None,labels_list=['BiRNN Error'],max_energy = 3 ,plot_steps = 0.2,y_axis = "%"):
+
+        BiRNN_abs_avg_errors_list = list()
+        BiRNN_std_errors_list = list()
+        BiRNN_l2_errors_list = list()
+        for eval_set in eval_sets_list:
+          BiRNN_estimated_energy_error = list()
+          real_energy = list()
+          estimated_energy = list()
+          for i in range(len(eval_set)):
+              estimated_energy.append(get_energy_from_velocities(eval_set[i].BiRNN_output[0], eval_set[i].BiRNN_output[1], eval_set[i].BiRNN_output[2]).cpu() if self.output_size == 3 else eval_set[i].BiRNN_output.cpu())
+              real_energy.append(eval_set[i].init_energy)
+              BiRNN_estimated_energy_error.append((100 * (estimated_energy[-1] - real_energy[-1]) / real_energy[-1]).abs().cpu())
+
+
+          real_energy = np.array(real_energy)
+          estimated_energy = np.array(estimated_energy)
+          BiRNN_estimated_energy_error = np.array(BiRNN_estimated_energy_error)
+
+          # Define energy bins
+          bins = np.arange(0.4, max_energy, plot_steps)  # Adjust the range and step as needed
+          bin_centers = (bins[:-1] + bins[1:]) / 2
+
+          BiRNN_abs_avg_errors = []
+          BiRNN_std_errors = []
+          BiRNN_l2_errors = []
+          mse_loss = nn.MSELoss()
+          for i in range(len(bins) - 1):
+              bin_mask = (real_energy >= bins[i]) & (real_energy < bins[i + 1])
+
+              if np.sum(bin_mask) > 0:
+                  BiRNN_errors_in_bin = BiRNN_estimated_energy_error[bin_mask]
+                  BiRNN_l2_errors.append(10*torch.log10(mse_loss(torch.tensor(estimated_energy[bin_mask]), torch.tensor(real_energy[bin_mask]))).item())
+                  BiRNN_abs_avg_errors.append(np.mean(BiRNN_errors_in_bin))
+                  BiRNN_std_errors.append(np.std(BiRNN_errors_in_bin))
+              else:
+                  BiRNN_abs_avg_errors.append(np.nan)
+                  BiRNN_std_errors.append(np.nan)
+                  BiRNN_l2_errors.append(np.nan)
+
+          # Convert to numpy arrays for easier handling in plotting
+          BiRNN_abs_avg_errors_list.append(np.array(BiRNN_abs_avg_errors))
+          BiRNN_std_errors_list.append(np.array(BiRNN_std_errors))
+          BiRNN_l2_errors_list.append(np.array(BiRNN_l2_errors))
+
+        # Plotting
+        plt.figure(figsize=(10, 6))
+
+        # Plot
+        for abs_avg_errors, std_errors,l2_errors,label in zip(BiRNN_abs_avg_errors_list, BiRNN_std_errors_list,BiRNN_l2_errors_list,labels_list):
+          if y_axis == '%':
+            plt.plot(bin_centers, abs_avg_errors, '-o', label=label)
+          else:
+            plt.plot(bin_centers, l2_errors, '-o', label=label)
+          # plt.fill_between(bin_centers, abs_avg_errors - std_errors, BiRNN_abs_avg_errors + std_errors, alpha=0.2)
+        plt.yscale('log')
+        plt.xlabel('Real Energy')
+        plt.ylabel('Absolute Average Error (%)' if y_axis == '%' else "MSE [dB]")
+        plt.title(f"{'%' if y_axis == '%' else 'MSE'} Error Comparison\nStep Size {plot_steps}")
+        plt.legend()
+        plt.grid(True)
+        save_path = os.path.join(save_path,f"BiRNN_Head_Output_{self.mode if suffix is None else suffix}.png")
+        if os.path.exists(save_path):
+          os.remove(save_path)
+        plt.savefig(save_path)
+        return torch.tensor(BiRNN_estimated_energy_error).mean(),torch.tensor(BiRNN_estimated_energy_error).std()
+
+
+
 
 
 if __name__ == "__main__":
-    MODE = "fmap"
-    [train_set,CV_set,test_set] =  torch.load("Simulations/Particle_Tracking/data/FC_PoC_Data_X.pt")
-    Pipeline = BiRNNPipeLine(MODE)
-    Pipeline.train(train_set=train_set,CV_set=CV_set,n_epochs=1500)
-    Pipeline.eval(test_set)
-    Pipeline.plot_data(test_set,"Tools/Other_Methods")
+    modes = ['bw_gain']#,'obs','real','fw','bw']#['bw_gain','bw_dx','bw_inov','bw','obs','real','fw']
+    num_runs=10
+    epochs = 5000
+    run_name = "L2_0.5-1.5MeV_Only_bw_gain"
+    data_path = "Tools/Other_Methods/FC_PoC_Data_Y.pt"
+    root_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)),"BiRNN_HEAD_Output")
+    models_save_path = os.path.join(root_folder,"Models",run_name)
+    graphs_save_path = os.path.join(root_folder,"Graphs",run_name)
+    results_save_path = os.path.join(root_folder,"Results_Summary")
 
+    os.makedirs(models_save_path,exist_ok=True)
+    os.makedirs(graphs_save_path,exist_ok=True)
+    os.makedirs(results_save_path,exist_ok=True)
+
+    [train_set,CV_set,test_set] =  torch.load(data_path)
+    results = {"Mode" : [] , "Loss" : [] , "Abs Avg" : [] , "STD" : []}
+    for run in range(num_runs):
+        for mode in modes:
+                print(f"\n######### {mode}_{run} #########")
+                Pipeline = BiRNNPipeLine(mode,output_path=models_save_path)
+                Pipeline.train(train_set=train_set,CV_set=CV_set,n_epochs=epochs,file_suffix=f"{mode}_{run}")
+                loss = Pipeline.eval(test_set,file_suffix=f"{mode}_{run}")
+                abs_avg , std = Pipeline.plot_data(test_set,save_path=graphs_save_path,suffix=f"{mode}_{run}") #plot_data_multiple_BiRNN
+                print(f"abs avg : {abs_avg} , std {std}")
+                results["Mode"].append(f"{mode}_{run}")
+                results["Loss"].append(loss.cpu().item())
+                results["Abs Avg"].append(abs_avg.cpu().item())
+                results["STD"].append(std.cpu().item())
+
+                df = pd.DataFrame(results)
+                if os.path.exists(f"Results_{run_name}.csv"):
+                            os.remove(f"Results_{run_name}.csv")
+                df.to_csv(os.path.join(results_save_path,f"Results_{run_name}.csv"))
 
 
 
