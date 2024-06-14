@@ -74,7 +74,7 @@ class CONFIG():
     def parse_config(self,config_path):
         ext = config_path.split('.')[-1]
         assert ext == 'json' or ext == 'yaml', "Format Not Supported!"
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r') as f:   
             if ext == 'yaml':
                 data = yaml.safe_load(f)
             elif ext == 'json':
@@ -621,7 +621,9 @@ def estimation_summary(traj_set,output_path,run_num):
             "gen" : get_mx_0(traj_set[traj_id].generated_traj.squeeze(-1))[1],
             "obs" : get_mx_0(traj_set[traj_id].y.squeeze(-1))[1],
             "fw" :  get_mx_0(traj_set[traj_id].x_estimated_FW.squeeze(-1))[1],
-            "bw" : get_mx_0(traj_set[traj_id].x_estimated_BW.squeeze(-1))[1]
+            "bw" : get_mx_0(traj_set[traj_id].x_estimated_BW.squeeze(-1))[1],
+            "real" : get_mx_0(traj_set[traj_id].x_real.squeeze(-1))[1]
+
         }
         real_energy = traj_set[traj_id].init_energy
         real_theta = traj_set[traj_id].init_teta
@@ -646,6 +648,7 @@ def estimation_summary(traj_set,output_path,run_num):
     plt.figure()
     plt.scatter(df['energy'],df['MP energy obs'],s=2,label="MP Energy Obs")
     plt.scatter(df['energy'],df['SP energy bw'],s=2,label="SP Energy BW")
+    plt.scatter(df['energy'],df['MP energy real'],s=2,label="MP Energy real")
     plt.legend()
     plt.title(f"Energy Error Esimtation %\nAbs Avg {np.abs(df['SP energy bw']).mean()}, STD {np.std(df['SP energy bw'])}")
     plt.xlabel("Energy [MeV]")

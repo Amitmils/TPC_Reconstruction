@@ -9,48 +9,54 @@ test_set_size: 1000
 batch_size: 1000
 force_batch: [] #For debug
 train : true #Master flag for training
-train_RTS: false
-train_BiRNN: True
+train_RTS: true
+train_BiRNN: true
+deep_unfolding : false
 lambda_loss : 0
+max_length : 10
 test_mode: FW + BW
+test_loss : velocity
 RTS_model_path: null # Simulations/Particle_Tracking/runs/D19_M05_h15_m13/models/best-model-weights_FINAL.pt #When null takes the default model from the run #
 BiRNN_model_path: null #default is 
 
 #RTS Training Scheduler
 wd: 1.0e-3
-first_phase_id: 5
+first_phase_id: 0
 num_runs : 1 #Runs in Final Eval
 max_energy_to_rerun: 1.5 #All trajectories with estimated energy under this value will be rerun 
 training_scheduler:
   '0':
     mode: FW
     lr: 1.0e-3
-    n_epochs: 10
-    spoon_feeding : 10
+    n_epochs: 6
+    spoon_feeding : 6 #this is a true or false flag, is a # due to legacy
+    loss: all
   '1':
     mode: FW
     lr: 1.0e-3
-    n_epochs: 10
+    n_epochs: 5
+    loss: all
   '2':
+    mode: FW
+    lr: 1.0e-3
+    n_epochs: 5
+    loss: velocity
+  '3':
+    mode: FW
+    lr: 5.0e-4
+    n_epochs: 5
+    loss: velocity
+  '4':
     mode: BW
     lr: 1.0e-3
-    n_epochs: 20
-    loss: all
-  '3':
-    mode: BW
-    lr: 4.5e-4
-    n_epochs: 20
-    loss: all
-  '4':
-    mode: FW + BW
-    lr: 5.0e-4
-    n_epochs: 20
-    loss: all
+    n_epochs: 60
+    loss: velocity
   '5':
-    mode: FW + BW + HEAD
-    lr: 1.0e-4
-    n_epochs: 100
-    loss: all
+    mode: BW
+    lr: 5.0e-4
+    n_epochs: 60
+    loss: velocity
+
 ################
 ## loss types ##
 ################
@@ -79,5 +85,5 @@ output_dim_mult_RTSNet: 40
 # #Paths
 
 path_results: Simulations/Particle_Tracking
-Dataset_path: Simulations/Particle_Tracking/data/point4-3Mev_Dataset_280points_25_05_24__09_07.pt
-test_set_path: Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt #Simulations/Particle_Tracking/data/3-40Mev_Dataset_1000points_25_05_24__15_39.pt #Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt # Test
+Dataset_path: Simulations/Particle_Tracking/data/point5-1_Dataset_1500points_13_06_24__22_29.pt
+test_set_path: Simulations/Particle_Tracking/data/point5-1_Dataset_1500points_13_06_24__22_29.pt #Simulations/Particle_Tracking/data/3-40Mev_Dataset_1000points_25_05_24__15_39.pt #Simulations/Particle_Tracking/data/point-3Mev_Dataset_16_05_24__19_17.pt # Test

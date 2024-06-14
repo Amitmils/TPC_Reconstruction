@@ -53,7 +53,7 @@ class Pipeline_ERTS:
             model_weights = torch.load(weights_path, map_location=self.device)
             self.model.load_state_dict(model_weights)
             self.logger.info(f"Loaded Weights from {os.path.basename(weights_path)}")
-            self.head_pipeline.model.load_state_dict(torch.load(os.path.join(self.config.path_results,"temp models",f"best-BiRNN_model_init.pt"),map_location=self.device))
+            # self.head_pipeline.model.load_state_dict(torch.load(os.path.join(self.config.path_results,"temp models",f"best-BiRNN_model_init.pt"),map_location=self.device))
         self.learningRate = self.config.training_scheduler[self.current_phase]["lr"] # Learning Rate of first phase
         self.num_epochs_in_phase = self.config.training_scheduler[self.current_phase]["n_epochs"]
         self.next_phase_change = self.num_epochs_in_phase # Which epoch to change to next phase
@@ -156,7 +156,6 @@ class Pipeline_ERTS:
             ### Training Sequence Batch ###
             ###############################
 
-            train_start = time.time()
             # Training Mode
             self.model.train()
             self.head_pipeline.model.train()
@@ -185,37 +184,35 @@ class Pipeline_ERTS:
 
             # Backward pass: compute gradient of the loss with respect to model
             # parameters
-            start = time.time()
-            prev_KNET_weights = [param.clone() for param in self.model.KNET_params]
-            prev_RTS_weights = [param.clone() for param in self.model.RTSNET_params]
-            prev_BiRNN_weights = [param.clone() for param in self.head_pipeline.model.parameters()]
+        
+            # prev_KNET_weights = [param.clone() for param in self.model.KNET_params]
+            # prev_RTS_weights = [param.clone() for param in self.model.RTSNET_params]
+            # prev_BiRNN_weights = [param.clone() for param in self.head_pipeline.model.parameters()]
 
             MSE_train_batch_linear_LOSS.backward(retain_graph=True)
             self.optimizer.step()
 
-            knet_updated = any(
-            not torch.equal(prev, current)
-            for prev, current in zip(prev_KNET_weights, self.model.KNET_params)
-            )
+            # knet_updated = any(
+            # not torch.equal(prev, current)
+            # for prev, current in zip(prev_KNET_weights, self.model.KNET_params)
+            # )
 
-            rtsnet_updated = any(
-                not torch.equal(prev, current)
-                for prev, current in zip(prev_RTS_weights, self.model.RTSNET_params)
-            )
+            # rtsnet_updated = any(
+            #     not torch.equal(prev, current)
+            #     for prev, current in zip(prev_RTS_weights, self.model.RTSNET_params)
+            # )
 
-            BiRNN_updated = any(
-                not torch.equal(prev, current)
-                for prev, current in zip(prev_BiRNN_weights, self.head_pipeline.model.parameters())
-            )
+            # BiRNN_updated = any(
+            #     not torch.equal(prev, current)
+            #     for prev, current in zip(prev_BiRNN_weights, self.head_pipeline.model.parameters())
+            # )
 
-            print(f"Knet Updated {knet_updated} , RTS Updated {rtsnet_updated} , BiRNN Updated {BiRNN_updated}")
+            # print(f"Knet Updated {knet_updated} , RTS Updated {rtsnet_updated} , BiRNN Updated {BiRNN_updated}")
 
             # self.scheduler.step(self.MSE_cv_dB_epoch[ti])
-            train_end = time.time()
             #################################
             ### Validation Sequence Batch ###
             #################################
-            cv_start = time.time()
             # Cross Validation Mode
             self.model.eval()
             self.head_pipeline.model.eval()
@@ -241,7 +238,6 @@ class Pipeline_ERTS:
                         torch.save(self.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-model-weights_FINAL.pt"))
                         if "HEAD" in self.SYSTEM_MODE.value: 
                             torch.save(self.head_pipeline.model.state_dict(), os.path.join(self.config.path_results,"temp models",f"best-BiRNN_model_FINAL.pt"))
-            cv_end = time.time()
             ########################
             ### Training Summary ###
             ########################
@@ -284,31 +280,43 @@ class Pipeline_ERTS:
         plt.legend()
         plt.savefig(os.path.join(output_path,f"Learning_Curve_.png"))
 
-    def NNTest(self, SysModel, test_set,run_num,set_name,load_RTS_model_path=None,load_BiRNN_model_path=None,save_path=None):
-
-        assert len(test_set), "Test set size is 0!"
-        self.SYSTEM_MODE = System_Mode(self.config.test_mode)
-        self.test_set_size = self.model.batch_size = len(test_set)
+    def NNEval(self, SysModel, eval_set,set_name,load_RTS_model_path=None,load_BiRNN_model_path=None):
+        # Wrapper for NNtest with deep unfolding
+        self.test_set_size = self.model.batch_size = len(eval_set)
         today = datetime.today()
         now = datetime.now()
-        if save_path is None:
-            run_path = os.path.join(self.config.path_results,"runs",f"{today.strftime('D%d_M%m')}_{now.strftime('h%H_m%M')}")
-        else:
-            run_path = save_path
-
+        run_path = os.path.join(self.config.path_results,"runs",f"{today.strftime('D%d_M%m')}_{now.strftime('h%H_m%M')}") if set_name == "Test" else None
+        self.SYSTEM_MODE = System_Mode(self.config.test_mode)
+        self.loss = self.config.test_loss
         if load_RTS_model_path is not None:
-            self.logger.info(f"Loading RTS Model from path {load_RTS_model_path}")
             model_weights = torch.load(load_RTS_model_path, map_location=self.device) 
         else:
-            self.logger.info(f"Loading RTS Model best-model-weights_FINAL")
             load_RTS_model_path = os.path.join(self.config.path_results,"temp models",f'best-model-weights_FINAL.pt')
-
-       # Load model weights with a with statement
+        
         with open(load_RTS_model_path, 'rb') as f:
             model_weights = torch.load(f, map_location=self.device)
-
-        # Set the loaded weights to the model
         self.model.load_state_dict(model_weights)
+
+        self.logger.info(f"\n######## Entered Eval {self.modelName} ########\n\n"
+              f"Set : {set_name}\n"
+              f"Mode : {self.SYSTEM_MODE.value}\n"
+              f"Loss : {self.loss}\n"
+              f"RTS Model : {load_RTS_model_path}\n"
+              f"run path : {run_path}\n\n"
+              f"######## Entered Eval  {self.modelName} ########")
+
+        prev_loss = float('inf')
+        run_num=0
+        while True:
+            print(f"\n -- run {run_num} -- ")
+            self.NNTest(SysModel,test_set=eval_set,run_num = run_num ,set_name=set_name,load_BiRNN_model_path=load_BiRNN_model_path,run_path=run_path)
+            if self.MSE_test_RTS_linear_avg >= prev_loss or not(self.config.deep_unfolding):
+                break
+            prev_loss = self.MSE_test_RTS_linear_avg
+            run_num +=1
+
+    def NNTest(self, SysModel, test_set,run_num,set_name,load_BiRNN_model_path,run_path):
+
 
         # Test mode
         self.model.eval()
@@ -335,13 +343,15 @@ class Pipeline_ERTS:
             os.makedirs(run_models_path,exist_ok=True)
             os.makedirs(run_results_path,exist_ok=True)
             shutil.copytree(os.path.join(self.config.path_results, "temp models"), run_models_path,dirs_exist_ok=True)
-            shutil.copyfile("Simulations/Particle_Tracking/config.yaml", os.path.join(run_path,"run_config_readonly.yaml"))
-            os.chmod(os.path.join(run_path,"run_config_readonly.yaml"), stat.S_IREAD)
+            if not(os.path.exists(os.path.join(run_path,"run_config_readonly.yaml"))):
+                shutil.copyfile("Simulations/Particle_Tracking/config.yaml", os.path.join(run_path,"run_config_readonly.yaml"))
+                os.chmod(os.path.join(run_path,"run_config_readonly.yaml"), stat.S_IREAD)
             try:
-                self.MSE_test_BiRNN_linear_avg = self.head_pipeline.eval(test_set,load_BiRNN_model_path)
-                self.head_pipeline.plot_data(test_set,run_results_path)
-            except:
-                self.logger.info("BiRNN Eval Failed!")
+                pass
+                # self.MSE_test_BiRNN_linear_avg = self.head_pipeline.eval(test_set,load_BiRNN_model_path)
+                # self.head_pipeline.plot_data(test_set,run_results_path)
+            except Exception as e:
+                self.logger.info(f"BiRNN Eval Failed!\n{e}")
             estimation_summary(test_set,run_results_path,run_num)
             try:
                 self.plot_training_summary(run_results_path,run_num)
@@ -350,7 +360,7 @@ class Pipeline_ERTS:
 
         end = time.time()
         t = end - start
-        if self.MSE_test_BiRNN_linear_avg  is not None:
+        if self.MSE_test_BiRNN_linear_avg is not None:
             self.logger.info(f"Final Eval {self.modelName} - MSE {set_name}: Total : {10 * torch.log10(self.MSE_test_BiRNN_linear_avg + self.config.lambda_loss * self.MSE_test_RTS_linear_avg).item()}[dB] , RTS {10 * torch.log10(self.MSE_test_RTS_linear_avg).item()}[dB] , BiRNN {10 * torch.log10(self.MSE_test_BiRNN_linear_avg).item()} [dB]")
         else:
             self.logger.info(f"Final Eval {self.modelName} - MSE {set_name}: RTS {10 * torch.log10(self.MSE_test_RTS_linear_avg).item()}[dB]")
@@ -361,8 +371,6 @@ class Pipeline_ERTS:
             shutil.copy2(os.path.join(self.config.path_results,"temp_log.log"), os.path.join(run_path,'logger.log'))
 
         return run_path
-    
-
 
     def calculate_loss(self,traj_batch,SysModel,do_FW_pass,run_num):
             
@@ -371,7 +379,7 @@ class Pipeline_ERTS:
             self.model.init_hidden()
             self.config.delta_t = torch.ones([self.model.batch_size]) * self.config.FTT_delta_t #forward pass has the finest Delta
 
-            clustered_traj_lengths_in_batch = torch.tensor([traj.x_real.shape[1] for traj in traj_batch])
+            clustered_traj_lengths_in_batch = torch.tensor([min(self.config.max_length,traj.x_real.shape[1]) for traj in traj_batch])
             generated_traj_lengths_in_batch = torch.tensor([traj.generated_traj.shape[1] for traj in traj_batch])
             max_clustered_traj_length_in_batch = torch.max(clustered_traj_lengths_in_batch)
             max_generated_traj_length_in_batch = torch.max(generated_traj_lengths_in_batch) * 2
@@ -388,21 +396,25 @@ class Pipeline_ERTS:
             clustered_in_generated_mask = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.bool)#if index is True , that SS is GTT and FTT -- for FW Pass Loss
             update_step_in_fw_mask = torch.zeros([len(traj_batch), SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.bool)# Mark which time steps in FW had update step from KF -- for FW Pass Loss
             steps_to_smooth_map = torch.zeros([len(traj_batch), max_generated_traj_length_in_batch],dtype=torch.int) + -1# Saves IDs of update steps to perform BW
-            bw_feature_map = torch.zeros([len(traj_batch),72, max_generated_traj_length_in_batch],dtype=torch.float) + -1# Saves IDs of update steps to perform BW
+            bw_gain = torch.zeros([len(traj_batch),SysModel.space_state_size**2, max_generated_traj_length_in_batch],dtype=torch.float) + -1# Saves IDs of update steps to perform BW
+            fw_gain = torch.zeros([len(traj_batch),SysModel.space_state_size * SysModel.observation_vector_size, max_generated_traj_length_in_batch],dtype=torch.float) + -1# Saves IDs of update steps to perform BW
+            bw_inov = torch.zeros([len(traj_batch),SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.float) + -1# Saves IDs of update steps to perform BW
+            bw_dx = torch.zeros([len(traj_batch),SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.float) + -1# Saves IDs of update steps to perform BW
 
 
             #If we are not backproping through forward pass, we dont need to redo FW pass - just take saved pass. BATCH SIZE must be equal to SET SIZE
             if do_FW_pass:
                 M1_0 = []
                 for ii in range(len(traj_batch)):
-                    batch_y[ii,:,:clustered_traj_lengths_in_batch[ii]] = traj_batch[ii].y[:3,:clustered_traj_lengths_in_batch[ii]].squeeze(-1)
+                    batch_y[ii,:,:clustered_traj_lengths_in_batch[ii]] = traj_batch[ii].y[:3,:clustered_traj_lengths_in_batch[ii]].squeeze(-1) if run_num == 0 else traj_batch[ii].x_estimated_BW[:3,:clustered_traj_lengths_in_batch[ii]].squeeze(-1)
                     batch_target[ii,:,:generated_traj_lengths_in_batch[ii]] = traj_batch[ii].generated_traj[:,:generated_traj_lengths_in_batch[ii]].squeeze(-1)
-                    clustered_in_generated_mask[ii,:,traj_batch[ii].t[1:]] = 1 #The first t is M1_0,
+                    clustered_in_generated_mask[ii,:,traj_batch[ii].t[1:clustered_traj_lengths_in_batch[ii]]] = 1 #The first t is M1_0,
                     m1,est_para = get_mx_0(traj_batch[ii].y.squeeze(-1))
+                    # m1 = traj_batch[ii].x_estimated_BW[:,0].reshape(-1)
                     if run_num>0: #If its not the first run, use the velocities estimations of the previous run
                         if self.loss == "all":
                             m1[:] = traj_batch[ii].initial_state_estimation[run_num-1] #get the velocities from previous run
-                        elif self.loss == "velocity":
+                        elif self.loss == "init_velocity":
                             m1[-3:] = traj_batch[ii].initial_state_estimation[run_num-1][-3:]
                     M1_0.append(m1.unsqueeze(0))
                     ii += 1
@@ -413,8 +425,7 @@ class Pipeline_ERTS:
                 # Forward Computation
                 fine_step_for_each_trajID_in_batch = torch.zeros(len(traj_batch),dtype=torch.int)
                 for t in range(1,max_clustered_traj_length_in_batch):
-                    # if not(t%10):
-                    #     self.logger.info(f"{mode} t = {t}")
+
                     distance_from_obs_for_each_trajID_in_batch = torch.full((len(traj_batch),), 1e5)
                     traj_id_in_batch_finished = t > (clustered_traj_lengths_in_batch - 1) #since we run till the maximum t in all trajs in batch, some might end before the others
                     traj_id_in_batch_that_need_prediction = ~traj_id_in_batch_finished
@@ -467,6 +478,7 @@ class Pipeline_ERTS:
                         fw_output_place_holder[~traj_id_in_batch_finished,:,fine_step_for_each_trajID_in_batch[~traj_id_in_batch_finished]] = output[~traj_id_in_batch_finished]
                     else:
                         x_out_forward_batch[~traj_id_in_batch_finished,:,fine_step_for_each_trajID_in_batch[~traj_id_in_batch_finished]] = output[~traj_id_in_batch_finished]
+                    fw_gain[~traj_id_in_batch_finished,:,fine_step_for_each_trajID_in_batch[~traj_id_in_batch_finished]] = self.model.KGain.reshape(len(traj_batch),-1).detach()[~traj_id_in_batch_finished,:] 
             else:#if do_FW_pass
                 #Take the FW estimation from previous run. We only save points where "update" was done.
                 with torch.no_grad():
@@ -487,34 +499,19 @@ class Pipeline_ERTS:
 
                 for id_in_batch in range(len(traj_batch)):
                     cluster_ids_in_fw = torch.cat((torch.tensor([[0]]), update_step_in_fw_mask[id_in_batch,0,:].nonzero()), dim=0) #add the first cluster (this was ignored in FW)
-                    cluster_ids_in_FFT = traj_batch[id_in_batch].t
+                    cluster_ids_in_FFT = traj_batch[id_in_batch].t[:clustered_traj_lengths_in_batch[id_in_batch]]
                     relevant_ids_est = list()
                     relevant_ids_FTT = list()
 
                     # if self.config.interpolation_points_to_add == 0:
                     relevant_ids_est = cluster_ids_in_fw.reshape(-1).tolist()
                     relevant_ids_FTT = cluster_ids_in_FFT.reshape(-1).tolist()
-                    # else:
-                    #     #Interpolate
-                    #     for i in range(len(cluster_ids_in_fw) - 1):
-                    #         start = cluster_ids_in_fw[i].item()
-                    #         end = cluster_ids_in_fw[i+1].item()
-                    #         relevant_ids_est.append(start)
-                    #         relevant_ids_est.append(int((start + end)/2))
-
-
-                    #         start = cluster_ids_in_FFT[i].item()
-                    #         end = cluster_ids_in_FFT[i+1].item()
-                    #         relevant_ids_FTT.append(start)
-                    #         relevant_ids_FTT.append(int((start + end)/2))
-                    #     relevant_ids_est.append(cluster_ids_in_fw[-1].item())
-                    #     relevant_ids_FTT.append(cluster_ids_in_FFT[-1].item())
 
                     #Ids to smooth in BW
                     steps_to_smooth_map[id_in_batch,:len(relevant_ids_est)] = torch.flip(torch.tensor(relevant_ids_est),dims=[0]).squeeze()
 
-                    #Velocity Loss Mask
-                    if self.loss == 'velocity' or self.loss == 'energy':
+                    #Init Velocity Loss Mask
+                    if self.loss == 'init_velocity' or self.loss == 'init_energy':
                         #Loss on the velocities of the first cluster
                         FTT_BW_mask_loss[id_in_batch] = False
                         FTT_BW_mask_loss[id_in_batch,[SS_VARIABLE.Vx.value,SS_VARIABLE.Vy.value,SS_VARIABLE.Vz.value],traj_batch[id_in_batch].t[0]] = True 
@@ -524,6 +521,15 @@ class Pipeline_ERTS:
                         #Loss on all points in trajectory
                         FTT_BW_mask_loss[id_in_batch,:,relevant_ids_FTT] = True 
                         est_BW_mask_loss[id_in_batch,:,relevant_ids_est] = True
+                    elif self.loss == 'velocity' or self.loss == 'energy':
+                        #Loss on velocity points in trajectory
+                        FTT_BW_mask_loss[id_in_batch,-3:,relevant_ids_FTT] = True 
+                        est_BW_mask_loss[id_in_batch,-3:,relevant_ids_est] = True
+                    elif self.loss == 'pos':
+                        #Loss on positional points in trajectory
+                        FTT_BW_mask_loss[id_in_batch,:3,relevant_ids_FTT] = True 
+                        est_BW_mask_loss[id_in_batch,:3,relevant_ids_est] = True
+
                     # elif self.loss == 'interpolation': 
                     #     #Loss only on interpolation points not on clusters
                     #     est_BW_mask_loss[id_in_batch] = est_BW_mask_loss[id_in_batch] & ~update_step_in_fw_mask
@@ -545,23 +551,36 @@ class Pipeline_ERTS:
                     x_out_batch[~end_of_traj, :, steps_to_smooth_map[~end_of_traj,k]] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_forward_batch[batch_ids, :, steps_to_smooth_map[:,k]],2), 
                                                                                     filter_x_nexttime = torch.unsqueeze(x_out_batch[batch_ids, :, steps_to_smooth_map[:,k-1]],2),
                                                                                     smoother_x_tplus2 = torch.unsqueeze(x_out_batch[batch_ids, :, steps_to_smooth_map[:,k-2]],2)),2)[~end_of_traj,:]
-                    bw_feature_map[~end_of_traj,:,steps_to_smooth_map[~end_of_traj,k]] = self.model.feature_map[~end_of_traj,:]
+                    bw_gain[~end_of_traj,:,steps_to_smooth_map[~end_of_traj,k]] = self.model.SGain.reshape(len(traj_batch),-1).detach()[~end_of_traj,:]
+                    bw_inov[~end_of_traj,:,steps_to_smooth_map[~end_of_traj,k]] = self.model.inov.detach().squeeze(-1)[~end_of_traj,:]
+                    bw_dx[~end_of_traj,:,steps_to_smooth_map[~end_of_traj,k]] = self.model.dx.detach().squeeze(-1)[~end_of_traj,:]
 
             #Compute  loss
             if self.SYSTEM_MODE == System_Mode.FW_ONLY:
-                normalizing_factor = 1
+                est_FW_mask_loss = update_step_in_fw_mask.clone()
+                FTT_FW_mask_loss = clustered_in_generated_mask.clone()
+                if self.loss == 'pos':
+                    est_FW_mask_loss[:,[SS_VARIABLE.Vx.value,SS_VARIABLE.Vy.value,SS_VARIABLE.Vz.value],:] = False
+                    FTT_FW_mask_loss[:,[SS_VARIABLE.Vx.value,SS_VARIABLE.Vy.value,SS_VARIABLE.Vz.value],:] = False
+                elif self.loss == 'velocity':
+                    est_FW_mask_loss[:,[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:] = False
+                    FTT_FW_mask_loss[:,[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],:] = False
                 if self.spoon_feeding: #Till the KNET warms up a bit
-                    MSE_batch_linear_LOSS = self.loss_fn((normalizing_factor*fw_output_place_holder)[update_step_in_fw_mask],(normalizing_factor*batch_target)[clustered_in_generated_mask])
+                    MSE_batch_linear_LOSS = self.loss_fn(fw_output_place_holder[est_FW_mask_loss],batch_target[FTT_FW_mask_loss])
                 else:
-                    MSE_batch_linear_LOSS = self.loss_fn((normalizing_factor*x_out_forward_batch)[update_step_in_fw_mask],(normalizing_factor*batch_target)[clustered_in_generated_mask])
+                    MSE_batch_linear_LOSS = self.loss_fn(x_out_forward_batch[est_FW_mask_loss],batch_target[FTT_FW_mask_loss])
             else:
                 for traj_id in range(len(traj_batch)):
                     non_zero_ids_in_FW = torch.cat((torch.tensor([[0]]), update_step_in_fw_mask[traj_id,0,:].nonzero()), dim=0) # Saves X_M0 and the hits where an update step was made
                     non_zero_ids_in_BW = x_out_batch[traj_id,0,:].nonzero() #filter out all the zeros
                     traj_batch[traj_id].x_estimated_FW = x_out_forward_batch[traj_id,:,non_zero_ids_in_FW]
+                    traj_batch[traj_id].fw_gain = fw_gain[traj_id,:,non_zero_ids_in_FW]
                     traj_batch[traj_id].t_update_step_in_FW = update_step_in_fw_mask[traj_id,0,:].nonzero() #Saved for BW pass when we take saved FW pass
                     traj_batch[traj_id].x_estimated_BW = x_out_batch[traj_id,:,non_zero_ids_in_BW]
-                    traj_batch[traj_id].bw_fmap = bw_feature_map[traj_id,:,non_zero_ids_in_BW]
+                    traj_batch[traj_id].bw_gain = bw_gain[traj_id,:,non_zero_ids_in_BW]
+                    traj_batch[traj_id].bw_inov = bw_inov[traj_id,:,non_zero_ids_in_BW]
+                    traj_batch[traj_id].bw_dx = bw_dx[traj_id,:,non_zero_ids_in_BW]
+
                     #save new estimations for next runs
                     if run_num == 0:
                         traj_batch[traj_id].initial_state_estimation = [traj_batch[traj_id].x_estimated_BW[:,0].detach().squeeze()]
@@ -572,13 +591,14 @@ class Pipeline_ERTS:
                     # self.head_pipeline.model.set_requires_grad(False)
                     MSE_batch_linear_LOSS = self.head_pipeline.get_one_epoch_loss(traj_batch)  +  self.config.lambda_loss * self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])#MSE Loss Function
                 else:#BW w/o Head
-                        if self.loss == 'energy':
+                        if 'energy' in self.loss: #for init_energy mode only first time step velocities are saved , for energy mode all time step velocities are saved
                             x_out_velocities_reshaped = x_out_batch[est_BW_mask_loss].reshape(-1,3)
                             target_velocities_reshaped = batch_target[FTT_BW_mask_loss].reshape(-1,3)
                             x_out_energies = get_energy_from_velocities(x_out_velocities_reshaped[:,0],x_out_velocities_reshaped[:,1],x_out_velocities_reshaped[:,2])
                             target_energies = get_energy_from_velocities(target_velocities_reshaped[:,0],target_velocities_reshaped[:,1],target_velocities_reshaped[:,2])
                             MSE_batch_linear_LOSS = self.loss_fn(x_out_energies, target_energies)
                         else:
-                            MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])
+                            MSE_batch_linear_LOSS = self.loss_fn(x_out_batch[est_BW_mask_loss],batch_target[FTT_BW_mask_loss])
+
             return MSE_batch_linear_LOSS
     

@@ -143,6 +143,7 @@ class RTSNetNN(KalmanNetNN):
         # Compute the 1-st posterior moment
         INOV = torch.matmul(self.SGain, self.dx)
         self.s_m1x_nexttime = filter_x + INOV
+        self.inov = INOV.detach()
 
         return self.s_m1x_nexttime
 

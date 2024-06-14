@@ -6,7 +6,6 @@ if str(script_dir) not in sys.path:
 import torch
 from Simulations.Extended_sysmdl import SystemModel
 import os
-import warnings
 from Pipelines.Pipeline_ERTS import Pipeline_ERTS as Pipeline
 from Pipelines.Pipeline_concat_models import Pipeline_twoRTSNets
 from datetime import datetime
@@ -54,8 +53,6 @@ system_config.logger.info(f"Test Load : {os.path.basename(system_config.test_set
 [train_set,CV_set, _] =  torch.load(system_config.Dataset_path)
 [_ ,_ , test_set] =  torch.load(system_config.test_set_path)
 
- 
-
 #Extract Relevant Data on the Trajectories
 system_config.data_source = train_set[0].data_src
 system_config.FTT_delta_t = train_set[0].delta_t
@@ -66,12 +63,9 @@ system_config.CV_set_size = min(len(CV_set),system_config.CV_set_size)
 system_config.test_set_size = min(len(test_set),system_config.test_set_size)
 os.makedirs(os.path.join(system_config.path_results,'temp models'),exist_ok=True)
 
-
-
 train_set = train_set[:system_config.train_set_size]
 CV_set = CV_set[:system_config.CV_set_size]
 test_set = test_set[:system_config.test_set_size]
-
 
 system_config.logger.info("trainset size: %d",len(train_set))
 system_config.logger.info("cvset size: %d",len(CV_set))
@@ -92,22 +86,20 @@ RTSNet_Pipelines.setssModel(sys_model)
 RTSNet_Pipelines.setModel(RTSNet_Models)
 RTSNet_Pipelines.logger = system_config.logger
 RTSNet_Pipelines.logger.info(f"Number of trainable parameters for RTSNet: %d",sum(p.numel() for p in RTSNet_Models.parameters() if p.requires_grad))
-BiRNN_Pipeline = BiRNNPipeLine(mode="bw",output_path=os.path.join(system_config.path_results,"temp models"),lr = system_config.BiRNN_lr,logger=system_config.logger)
+BiRNN_Pipeline = BiRNNPipeLine(mode="bw",output_path=os.path.join(system_config.path_results,"temp models"),lr = system_config.BiRNN_lr,logger=system_config.logger,device=device)
 RTSNet_Pipelines.setHeadPipeline(BiRNN_Pipeline)
 RTSNet_Pipelines.setTrainingParams()
 if system_config.train == True:
    if system_config.train_RTS:
       [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = RTSNet_Pipelines.NNTrain(sys_model, train_set, CV_set,run_num = 0)
    if system_config.train_BiRNN:
-      print(f"Train Set in Eval")
-      RTSNet_Pipelines.NNTest(sys_model,train_set,run_num = 0 ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "train")
-      print(f"CV Set in Eval")
-      RTSNet_Pipelines.NNTest(sys_model,CV_set,run_num = 0 ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "CV")
+      RTSNet_Pipelines.NNEval(sys_model,train_set ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Train")
+      RTSNet_Pipelines.NNEval(sys_model,CV_set ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "CV")
       # RTSNet_Pipelines.head_pipeline.train(train_set=train_set,CV_set=CV_set,n_epochs=system_config.BiRNN_n_epochs)
 
-save_path = RTSNet_Pipelines.NNTest(sys_model,test_set,run_num = 0 ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Test")
+RTSNet_Pipelines.NNEval(sys_model,test_set,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Test")
 
-torch.save([train_set,CV_set,test_set],"Simulations/Particle_Tracking/data/FC_PoC_Data_X.pt")
+torch.save([train_set,CV_set,test_set],"Simulations/Particle_Tracking/data/FC_PoC_Data_Z_VelKF_First_Pass.pt")
 ####################################################################################
 
 
