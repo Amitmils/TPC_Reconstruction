@@ -7,6 +7,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from Tools.utils import *
+import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.use('Agg')
 
 if torch.cuda.is_available():
   device = torch.device('cuda')
@@ -69,32 +73,31 @@ class BiRNN(nn.Module):
         return out
 
 class BiRNNPipeLine():
-    def __init__(self,mode,output_path="Models",lr=8e-4,logger=None,device=device) -> None:
+    def __init__(self,mode,output_path="Models",lr=1e-3,logger=None,max_length = 1000,device=device) -> None:
         self.mode = mode
         self.logger = logger
         self.output_path = output_path
         self.device = device
-        if self.mode == "obs":
+        self.max_length = max_length
+        if self.mode == "obs" or self.mode == "bw_pos" or self.mode == "bw_vel" or self.mode == "real_vel":
             input_size = 3  # size of each element in the sequence
-            hidden_size = 20  # size of hidden state
-            num_layers = 10  # number of layers in the GRU
         elif self.mode == "fmap" or self.mode == "bw_gain":
             input_size = 42  # size of each element in the sequence
-            hidden_size = 20  # size of hidden state
-            num_layers = 10  # number of layers in the GRU
         elif self.mode == "bw_dx" or self.mode == "bw_inov":
             input_size = 12  # size of each element in the sequence
-            hidden_size = 20  # size of hidden state
-            num_layers = 10  # number of layers in the GRU
-        # elif self.mode == "bw_fw_gain":
-        #     input_size = 21  # size of each element in the sequence
-        #     hidden_size = 20  # size of hidden state
-        #     num_layers = 10  # number of layers in the GRU
+        elif self.mode == "bw_fw_gain":
+            input_size = 21  # size of each element in the sequence
+        elif self.mode == "bw_pos_gain" or self.mode == 'bw_vel_gain':
+            input_size = 39  # size of each element in the sequence
+        elif self.mode == 'bw_vel_gain_2':
+            input_size = 21  # size of each element in the sequence
+        elif self.mode == 'real_energy' or self.mode == 'bw_energy':
+            input_size = 1
         else:
             input_size = 6  # size of each element in the sequence
-            hidden_size = 20  # size of hidden state
-            num_layers = 10  # number of layers in the GRU
         self.output_size = 3 # size of the output
+        hidden_size = 20  # size of hidden state
+        num_layers = 10  # number of layers in the GRU
         self.model = BiRNN(input_size, hidden_size, num_layers, self.output_size)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
@@ -107,8 +110,6 @@ class BiRNNPipeLine():
         # return ((((train_output-target).abs())/target)).mean()
         return mse_loss(train_output,target)
         # return ((((train_output-target)**2)/target)).mean()
-
-
 
     def parse_data(self,set):
         batch = []
@@ -124,6 +125,14 @@ class BiRNNPipeLine():
               sequence = traj.generated_traj.squeeze().T
           elif self.mode == "real":
               sequence = traj.x_real.squeeze().T
+          elif self.mode == "real_energy":
+              velocities = traj.x_real.squeeze()[-3:,:].T
+              sequence = get_energy_from_velocities(velocities[:,0],velocities[:,1],velocities[:,2]).reshape(-1,1)
+          elif self.mode == "bw_energy":
+              velocities = traj.x_estimated_BW.squeeze()[-3:,:].T
+              sequence = get_energy_from_velocities(velocities[:,0],velocities[:,1],velocities[:,2]).reshape(-1,1)
+          elif self.mode == "real_vel":
+              sequence = traj.x_real.squeeze()[-3:,:].T
           elif self.mode == "fw":
               sequence = traj.x_estimated_FW.squeeze().T
           elif self.mode == "bw_dx":
@@ -134,13 +143,24 @@ class BiRNNPipeLine():
               sequence = torch.cat((traj.fmap.squeeze().T[:,:36], traj.x_estimated_BW.squeeze().T), dim=1)
           elif self.mode == "bw_gain":
               sequence = torch.cat((traj.bw_gain.squeeze().T, traj.x_estimated_BW.squeeze().T), dim=1)
-          # elif self.mode == "bw_fw_gain":
-          #     sequence = torch.cat((traj.fw_gain.squeeze().T, traj.x_estimated_BW.squeeze()[:3,:].T), dim=1)
+          elif self.mode == "bw_fw_gain":
+              sequence = torch.cat((traj.fw_gain.squeeze().T, traj.x_estimated_BW.squeeze()[:3,:].T), dim=1)
+          elif self.mode == "bw_pos":
+              sequence = traj.x_estimated_BW.squeeze()[:3,:].T
+          elif self.mode == "bw_pos_gain":
+              sequence = torch.cat((traj.bw_gain.squeeze().T, traj.x_estimated_BW.squeeze()[:3,:].T), dim=1)
+          elif self.mode == "bw_vel":
+              sequence = traj.x_estimated_BW.squeeze()[-3:,:].T
+          elif self.mode == "bw_vel_gain":
+              sequence = torch.cat((traj.bw_gain.squeeze().T, traj.x_estimated_BW.squeeze()[-3:,:].T), dim=1)
+          elif self.mode == "bw_vel_gain_2":
+              #get only gains for velocity
+              sequence = torch.cat((traj.bw_gain.squeeze()[18:].T, traj.x_estimated_BW.squeeze()[-3:,:].T), dim=1)
           elif self.mode == "birnn_smoother":
               sequence = traj.BiRNN_Smoother_output.squeeze().T
           target.append(traj.generated_traj[-3:,0].squeeze())
-          batch.append(sequence)
-          lengths.append(seq_length)
+          batch.append(sequence[:min(seq_length,self.max_length)])
+          lengths.append(min(seq_length,self.max_length))
         padded_batch = nn.utils.rnn.pad_sequence(batch, batch_first=True)
         return padded_batch.to(device), torch.tensor(lengths), torch.stack(target).to(device)
 
@@ -293,14 +313,12 @@ class BiRNNPipeLine():
 
 
 
-
-
 if __name__ == "__main__":
-    modes = ['bw_gain']#,'obs','real','fw','bw']#['bw_gain','bw_dx','bw_inov','bw','obs','real','fw']
+    modes = ['bw_vel','bw_energy']#['real_energy','real_vel','bw_vel','bw_vel_gain_2','bw_vel_gain','bw_vel_gain_2','bw','bw_gain']#,'bw_pos','bw_vel','bw_pos_gain','bw_vel_gain']#['bw_gain','bw_dx','bw_inov','bw','obs','real','fw']
     num_runs=10
     epochs = 5000
-    run_name = "L2_0.5-1.5MeV_Only_bw_gain"
-    data_path = "Tools/Other_Methods/FC_PoC_Data_Y.pt"
+    run_name = "L2_0.5-1MeV_uniform_energy_error"
+    data_path = "Tools/Other_Methods/FC_PoC_Data_Z_EnerKF.pt"
     root_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)),"BiRNN_HEAD_Output")
     models_save_path = os.path.join(root_folder,"Models",run_name)
     graphs_save_path = os.path.join(root_folder,"Graphs",run_name)
@@ -315,7 +333,7 @@ if __name__ == "__main__":
     for run in range(num_runs):
         for mode in modes:
                 print(f"\n######### {mode}_{run} #########")
-                Pipeline = BiRNNPipeLine(mode,output_path=models_save_path)
+                Pipeline = BiRNNPipeLine(mode,output_path=models_save_path,device=device,max_length=100)
                 Pipeline.train(train_set=train_set,CV_set=CV_set,n_epochs=epochs,file_suffix=f"{mode}_{run}")
                 loss = Pipeline.eval(test_set,file_suffix=f"{mode}_{run}")
                 abs_avg , std = Pipeline.plot_data(test_set,save_path=graphs_save_path,suffix=f"{mode}_{run}") #plot_data_multiple_BiRNN
@@ -329,6 +347,3 @@ if __name__ == "__main__":
                 if os.path.exists(f"Results_{run_name}.csv"):
                             os.remove(f"Results_{run_name}.csv")
                 df.to_csv(os.path.join(results_save_path,f"Results_{run_name}.csv"))
-
-
-
