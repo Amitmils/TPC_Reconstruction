@@ -12,7 +12,6 @@ from datetime import datetime
 from RTSNet.RTSNet_nn import RTSNetNN
 from Tools.utils import *
 from Tools.Other_Methods.BiRNN import BiRNNPipeLine
-
 system_config= CONFIG("Simulations/Particle_Tracking/config.yaml")
 system_config.logger = setup_logger(os.path.join(system_config.path_results,"temp_log.log")) #this logger will be in config and in Pipeline itself
 system_config.logger.info("Pipeline Start")
@@ -50,8 +49,8 @@ else:
 ####################
 system_config.logger.info(f"Train / CV Load : {os.path.basename(system_config.Dataset_path)}")
 system_config.logger.info(f"Test Load : {os.path.basename(system_config.test_set_path)}")
-[train_set,CV_set, _] =  torch.load(system_config.Dataset_path)
-[_ ,_ , test_set] =  torch.load(system_config.test_set_path)
+[train_set,CV_set, _] =  torch.load(system_config.Dataset_path,map_location=device)
+[_ ,_ , test_set] =  torch.load(system_config.test_set_path,map_location=device)
 
 #Extract Relevant Data on the Trajectories
 system_config.data_source = train_set[0].data_src
@@ -95,11 +94,13 @@ if system_config.train == True:
    if system_config.train_BiRNN:
       RTSNet_Pipelines.NNEval(sys_model,train_set ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Train")
       RTSNet_Pipelines.NNEval(sys_model,CV_set ,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "CV")
-      # RTSNet_Pipelines.head_pipeline.train(train_set=train_set,CV_set=CV_set,n_epochs=system_config.BiRNN_n_epochs)
+      RTSNet_Pipelines.head_pipeline.train(train_set=train_set,CV_set=CV_set,n_epochs=system_config.BiRNN_n_epochs)
 
-RTSNet_Pipelines.NNEval(sys_model,test_set,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Test")
+saved_dir = RTSNet_Pipelines.NNEval(sys_model,test_set,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Test")
 
-torch.save([train_set,CV_set,test_set],"Simulations/Particle_Tracking/data/FC_PoC_Data_Z_VelKF_First_Pass.pt")
+
+torch.save([train_set,CV_set,test_set],saved_dir+'traj_outputs.pt')
+print(f"Run output saved to {saved_dir}")
 ####################################################################################
 
 

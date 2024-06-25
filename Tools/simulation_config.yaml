@@ -26,14 +26,15 @@ CoM_observations : true #if set to true, observations will be taken from a CoM o
 mode: "generate_dataset" # "generate_dataset" - generate a whole dataset // "generate_traj" - generate 1 trajectory
 
 ##Config Parameters for "generate_dataset"
-num_train_traj : 100
-num_val_traj: 20
-num_test_traj : 0
-sub_sample_rate_data: 5
-
-dataset_name : "10-15Mev_Dataset_120points"
+dataset_name : "point5-1_Dataset_1500points"
 output_dir : "Simulations/Particle_Tracking/data" # where to save results
-angle_energy_table_path : Tools/Angle_Energy_10Mev-15Mev.txt
+angle_energy_table_path : Tools/Angle_Energy_point5-1MeV_2000.txt
+
+num_train_traj : 250
+num_val_traj: 250
+num_test_traj : 1000
+sub_sample_rate_data: 1
+
 
 ##Config Parameters for "generate_traj"
 energy :  0.3579999999999 #MeV

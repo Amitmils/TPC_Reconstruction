@@ -471,10 +471,11 @@ class Traj_Generator():
             # E = sqrt(p^2+ M_ener^2) - M_ener
             p = torch.sqrt((energy + M_Ener)**2 - M_Ener**2) # MeV/c
             v = convert_momentum_to_velocity(p)
-            self.real_traj[SS_VARIABLE.Vx.value,0,:] = v * np.sin(theta) * np.cos(phi)
-            self.real_traj[SS_VARIABLE.Vy.value,0,:] = v * np.sin(theta) * np.sin(phi)
-            self.real_traj[SS_VARIABLE.Vz.value,0,:] = v * np.cos(theta)
-            get_energy_from_velocities(v * np.sin(theta) * np.cos(phi),v * np.sin(theta) * np.sin(phi),v * np.cos(theta))
+            self.real_traj[SS_VARIABLE.Vx.value,0,:],self.real_traj[SS_VARIABLE.Vy.value,0,:],self.real_traj[SS_VARIABLE.Vz.value,0,:] = spherical_to_cartersian_co(mag=v,theta=theta,phi=phi)
+            # self.real_traj[SS_VARIABLE.Vx.value,0,:] = v * np.sin(theta) * np.cos(phi)
+            # self.real_traj[SS_VARIABLE.Vy.value,0,:] = v * np.sin(theta) * np.sin(phi)
+            # self.real_traj[SS_VARIABLE.Vz.value,0,:] = v * np.cos(theta)
+            # get_energy_from_velocities(v * np.sin(theta) * np.cos(phi),v * np.sin(theta) * np.sin(phi),v * np.cos(theta))
         self.obs_traj[:,0,:] =  self.real_traj[[SS_VARIABLE.X.value,SS_VARIABLE.Y.value,SS_VARIABLE.Z.value],0,:]
 
     def get_obs_traj_from_pad(self,traj_length):
@@ -617,20 +618,21 @@ def estimation_summary(traj_set,output_path,run_num):
     set_summary = list()
     for traj_id in range(len(traj_set)):
 
+        first_cluster_energy = get_energy_from_velocities(traj_set[traj_id].x_real[3,0].squeeze(),traj_set[traj_id].x_real[4,0].squeeze(),traj_set[traj_id].x_real[5,0].squeeze())
         estimations ={
             "gen" : get_mx_0(traj_set[traj_id].generated_traj.squeeze(-1))[1],
-            "obs" : get_mx_0(traj_set[traj_id].y.squeeze(-1))[1],
+            "obs" : get_mx_0(traj_set[traj_id].y.squeeze(-1),energy_at_first_cluster=first_cluster_energy,use_traj_for_energy=True)[1],
             "fw" :  get_mx_0(traj_set[traj_id].x_estimated_FW.squeeze(-1))[1],
             "bw" : get_mx_0(traj_set[traj_id].x_estimated_BW.squeeze(-1))[1],
             "real" : get_mx_0(traj_set[traj_id].x_real.squeeze(-1))[1]
 
         }
-        real_energy = traj_set[traj_id].init_energy
+        real_energy = get_energy_from_velocities(traj_set[traj_id].x_real[3,0],traj_set[traj_id].x_real[4,0],traj_set[traj_id].x_real[5,0])#traj_set[traj_id].init_energy
         real_theta = traj_set[traj_id].init_teta
         real_phi = traj_set[traj_id].init_phi
         traj_data = [real_energy,real_theta]
         traj_data = {"ID" : traj_id,
-                     "energy": real_energy,
+                     "energy": real_energy.item(),
                      "theta" : real_theta,
                      "phi": real_phi}
         for type,est in estimations.items():
@@ -641,6 +643,7 @@ def estimation_summary(traj_set,output_path,run_num):
         if hasattr(traj_set[traj_id], 'BiRNN_output'):
             birnn_energy = get_energy_from_velocities(traj_set[traj_id].BiRNN_output[0],traj_set[traj_id].BiRNN_output[1],traj_set[traj_id].BiRNN_output[2])
             traj_data[f"BiRNN Est"] = round(torch.abs(100*(real_energy-birnn_energy)/real_energy).item(),2)
+            traj_data["BiRNN Estimation"] = birnn_energy.item()
         set_summary.append(traj_data)
 
     df = pd.DataFrame(set_summary)
@@ -648,7 +651,6 @@ def estimation_summary(traj_set,output_path,run_num):
     plt.figure()
     plt.scatter(df['energy'],df['MP energy obs'],s=2,label="MP Energy Obs")
     plt.scatter(df['energy'],df['SP energy bw'],s=2,label="SP Energy BW")
-    plt.scatter(df['energy'],df['MP energy real'],s=2,label="MP Energy real")
     plt.legend()
     plt.title(f"Energy Error Esimtation %\nAbs Avg {np.abs(df['SP energy bw']).mean()}, STD {np.std(df['SP energy bw'])}")
     plt.xlabel("Energy [MeV]")
@@ -657,6 +659,11 @@ def estimation_summary(traj_set,output_path,run_num):
     plt.savefig(os.path.join(output_path,f"Energy_Estimation_R{run_num}.png"))
     df.to_csv(os.path.join(output_path,f"Estimation_Summary_R{run_num}.csv"))
 
+def spherical_to_cartersian_co(mag,theta,phi):
+    x = mag * torch.sin(theta) * torch.cos(phi)
+    y = mag * torch.sin(theta) * torch.sin(phi)
+    z = mag * torch.cos(theta)
+    return x , y , z
 
 def get_energy_from_brho(brho):
     '''
@@ -683,7 +690,7 @@ def plot_circle_with_fit(x_center_fit, y_center_fit, radius_fit,traj_x,traj_y):
     plt.legend()
     plt.show()
 
-def get_mx_0(traj_coordinates):
+def get_mx_0(traj_coordinates,energy_at_first_cluster=None,error_perc=0,use_traj_for_energy=True):
     mx_0 = torch.zeros(6) #Size of state vector is 6x1
 
     # only use the beginning of the traj for estimation
@@ -713,8 +720,13 @@ def get_mx_0(traj_coordinates):
     init_theta = torch.arccos(vector[1])
 
     ### Init Energy ###
-    brho = init_radius * B / torch.sin(init_theta)
-    init_energy,init_p = get_energy_from_brho(brho)
+    if not(use_traj_for_energy) and energy_at_first_cluster is not None:
+        init_energy = energy_at_first_cluster * (1 + error_perc/100)
+        init_p = convert_velocity_to_momentum(get_velocity_from_energy(init_energy))
+    else:
+        brho = init_radius * B / torch.sin(init_theta)
+        init_energy,init_p = get_energy_from_brho(brho)
+
 
     phis_over_time = torch.arctan2(y_from_center[1:]-y_from_center[0],x_from_center[1:]-x_from_center[0])
     avg_diff_between_phis = torch.median(phis_over_time.diff())
@@ -734,10 +746,14 @@ def get_mx_0(traj_coordinates):
     mx_0[SS_VARIABLE.X.value] = x[0]
     mx_0[SS_VARIABLE.Y.value] = y[0]
     mx_0[SS_VARIABLE.Z.value] = z[0]
-    mx_0[SS_VARIABLE.Vx.value] = convert_momentum_to_velocity(init_p) * torch.sin(init_theta) * torch.cos(init_phi)
-    mx_0[SS_VARIABLE.Vy.value] = convert_momentum_to_velocity(init_p) * torch.sin(init_theta) * torch.sin(init_phi)
-    mx_0[SS_VARIABLE.Vz.value] = convert_momentum_to_velocity(init_p) * torch.cos(init_theta)
+    # mx_0[SS_VARIABLE.Vx.value] = convert_momentum_to_velocity(init_p) * torch.sin(init_theta) * torch.cos(init_phi)
+    # mx_0[SS_VARIABLE.Vy.value] = convert_momentum_to_velocity(init_p) * torch.sin(init_theta) * torch.sin(init_phi)
+    # mx_0[SS_VARIABLE.Vz.value] = convert_momentum_to_velocity(init_p) * torch.cos(init_theta)
+    mx_0[SS_VARIABLE.Vx.value],mx_0[SS_VARIABLE.Vy.value],mx_0[SS_VARIABLE.Vz.value] =  spherical_to_cartersian_co(mag=convert_momentum_to_velocity(init_p),theta=init_theta,phi=init_phi)
     return mx_0,estimated_parameters
+
+
+    
 
 def convert_momentum_to_velocity(p):
     '''

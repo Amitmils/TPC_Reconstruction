@@ -9,7 +9,7 @@ import time
 import random
 import numpy as np
 from Plot import Plot_extended as Plot
-from Tools.utils import get_mx_0,System_Mode,Trajectory_SS_Type,estimation_summary,get_energy_from_velocities,SS_VARIABLE
+from Tools.utils import get_mx_0,System_Mode,Trajectory_SS_Type,estimation_summary,get_energy_from_velocities,get_velocity_from_energy,spherical_to_cartersian_co,SS_VARIABLE
 import os
 import matplotlib.pyplot as plt
 import time
@@ -286,7 +286,7 @@ class Pipeline_ERTS:
         today = datetime.today()
         now = datetime.now()
         run_path = os.path.join(self.config.path_results,"runs",f"{today.strftime('D%d_M%m')}_{now.strftime('h%H_m%M')}") if set_name == "Test" else None
-        self.SYSTEM_MODE = System_Mode(self.config.test_mode)
+        self.SYSTEM_MODE = System_Mode.FW_BW
         self.loss = self.config.test_loss
         if load_RTS_model_path is not None:
             model_weights = torch.load(load_RTS_model_path, map_location=self.device) 
@@ -314,6 +314,7 @@ class Pipeline_ERTS:
                 break
             prev_loss = self.MSE_test_RTS_linear_avg
             run_num +=1
+        return run_path
 
     def NNTest(self, SysModel, test_set,run_num,set_name,load_BiRNN_model_path,run_path):
 
@@ -336,6 +337,9 @@ class Pipeline_ERTS:
             self.MSE_test_RTS_linear_avg = self.calculate_loss(set,SysModel,do_FW_pass=True,run_num=run_num)
             self.MSE_test_BiRNN_linear_avg = None
 
+        for traj in test_set:
+            traj.initial_state_estimation = traj.x_estimated_BW[:,0]
+
         if set_name == "Test":
             #Run Head
             run_models_path = os.path.join(run_path,"models")
@@ -347,9 +351,8 @@ class Pipeline_ERTS:
                 shutil.copyfile("Simulations/Particle_Tracking/config.yaml", os.path.join(run_path,"run_config_readonly.yaml"))
                 os.chmod(os.path.join(run_path,"run_config_readonly.yaml"), stat.S_IREAD)
             try:
-                pass
-                # self.MSE_test_BiRNN_linear_avg = self.head_pipeline.eval(test_set,load_BiRNN_model_path)
-                # self.head_pipeline.plot_data(test_set,run_results_path)
+                self.MSE_test_BiRNN_linear_avg = self.head_pipeline.eval(test_set,load_BiRNN_model_path)
+                self.head_pipeline.plot_data(test_set,run_results_path)
             except Exception as e:
                 self.logger.info(f"BiRNN Eval Failed!\n{e}")
             estimation_summary(test_set,run_results_path,run_num)
@@ -361,7 +364,7 @@ class Pipeline_ERTS:
         end = time.time()
         t = end - start
         if self.MSE_test_BiRNN_linear_avg is not None:
-            self.logger.info(f"Final Eval {self.modelName} - MSE {set_name}: Total : {10 * torch.log10(self.MSE_test_BiRNN_linear_avg + self.config.lambda_loss * self.MSE_test_RTS_linear_avg).item()}[dB] , RTS {10 * torch.log10(self.MSE_test_RTS_linear_avg).item()}[dB] , BiRNN {10 * torch.log10(self.MSE_test_BiRNN_linear_avg).item()} [dB]")
+            self.logger.info(f"Final Eval {self.modelName} - MSE {set_name}: Total (lambda = {self.config.lambda_loss}): {10 * torch.log10(self.MSE_test_BiRNN_linear_avg + self.config.lambda_loss * self.MSE_test_RTS_linear_avg).item()}[dB] , RTS {10 * torch.log10(self.MSE_test_RTS_linear_avg).item()}[dB] , BiRNN {10 * torch.log10(self.MSE_test_BiRNN_linear_avg).item()} [dB]")
         else:
             self.logger.info(f"Final Eval {self.modelName} - MSE {set_name}: RTS {10 * torch.log10(self.MSE_test_RTS_linear_avg).item()}[dB]")
 
@@ -401,7 +404,6 @@ class Pipeline_ERTS:
             bw_inov = torch.zeros([len(traj_batch),SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.float) + -1# Saves IDs of update steps to perform BW
             bw_dx = torch.zeros([len(traj_batch),SysModel.space_state_size, max_generated_traj_length_in_batch],dtype=torch.float) + -1# Saves IDs of update steps to perform BW
 
-
             #If we are not backproping through forward pass, we dont need to redo FW pass - just take saved pass. BATCH SIZE must be equal to SET SIZE
             if do_FW_pass:
                 M1_0 = []
@@ -409,13 +411,11 @@ class Pipeline_ERTS:
                     batch_y[ii,:,:clustered_traj_lengths_in_batch[ii]] = traj_batch[ii].y[:3,:clustered_traj_lengths_in_batch[ii]].squeeze(-1) if run_num == 0 else traj_batch[ii].x_estimated_BW[:3,:clustered_traj_lengths_in_batch[ii]].squeeze(-1)
                     batch_target[ii,:,:generated_traj_lengths_in_batch[ii]] = traj_batch[ii].generated_traj[:,:generated_traj_lengths_in_batch[ii]].squeeze(-1)
                     clustered_in_generated_mask[ii,:,traj_batch[ii].t[1:clustered_traj_lengths_in_batch[ii]]] = 1 #The first t is M1_0,
-                    m1,est_para = get_mx_0(traj_batch[ii].y.squeeze(-1))
-                    # m1 = traj_batch[ii].x_estimated_BW[:,0].reshape(-1)
-                    if run_num>0: #If its not the first run, use the velocities estimations of the previous run
-                        if self.loss == "all":
-                            m1[:] = traj_batch[ii].initial_state_estimation[run_num-1] #get the velocities from previous run
-                        elif self.loss == "init_velocity":
-                            m1[-3:] = traj_batch[ii].initial_state_estimation[run_num-1][-3:]
+                    energy_at_first_cluster = get_energy_from_velocities(traj_batch[ii].x_real[3,0],traj_batch[ii].x_real[4,0],traj_batch[ii].x_real[5,0])
+                    m1,est_para = get_mx_0(traj_batch[ii].y.squeeze(-1),energy_at_first_cluster=energy_at_first_cluster,use_traj_for_energy=True,error_perc=10)
+                    # m1 = traj_batch[ii].BiRNN_output #traj_batch[ii].x_real[:,0].squeeze(-1) *1.0001 #traj_batch[ii].BiRNN_output #
+                    # if hasattr(traj_batch[ii], 'initial_state_estimation'):
+                    #     m1[3:] = traj_batch[ii].initial_state_estimation[3:].reshape(-1)
                     M1_0.append(m1.unsqueeze(0))
                     ii += 1
 
@@ -517,6 +517,11 @@ class Pipeline_ERTS:
                         FTT_BW_mask_loss[id_in_batch,[SS_VARIABLE.Vx.value,SS_VARIABLE.Vy.value,SS_VARIABLE.Vz.value],traj_batch[id_in_batch].t[0]] = True 
                         est_BW_mask_loss[id_in_batch] = False
                         est_BW_mask_loss[id_in_batch,[SS_VARIABLE.Vx.value,SS_VARIABLE.Vy.value,SS_VARIABLE.Vz.value],0] = True
+                    if self.loss == 'init_state':
+                        FTT_BW_mask_loss[id_in_batch] = False
+                        FTT_BW_mask_loss[id_in_batch,:,traj_batch[id_in_batch].t[0]] = True 
+                        est_BW_mask_loss[id_in_batch] = False
+                        est_BW_mask_loss[id_in_batch,:,0] = True
                     elif self.loss == 'all':
                         #Loss on all points in trajectory
                         FTT_BW_mask_loss[id_in_batch,:,relevant_ids_FTT] = True 
@@ -551,6 +556,9 @@ class Pipeline_ERTS:
                     x_out_batch[~end_of_traj, :, steps_to_smooth_map[~end_of_traj,k]] = torch.squeeze(self.model(filter_x = torch.unsqueeze(x_out_forward_batch[batch_ids, :, steps_to_smooth_map[:,k]],2), 
                                                                                     filter_x_nexttime = torch.unsqueeze(x_out_batch[batch_ids, :, steps_to_smooth_map[:,k-1]],2),
                                                                                     smoother_x_tplus2 = torch.unsqueeze(x_out_batch[batch_ids, :, steps_to_smooth_map[:,k-2]],2)),2)[~end_of_traj,:]
+                    if torch.isnan(x_out_batch[~end_of_traj, :, steps_to_smooth_map[~end_of_traj,k]]).any():
+                        print(f"NaN detected in output {k}")
+                    
                     bw_gain[~end_of_traj,:,steps_to_smooth_map[~end_of_traj,k]] = self.model.SGain.reshape(len(traj_batch),-1).detach()[~end_of_traj,:]
                     bw_inov[~end_of_traj,:,steps_to_smooth_map[~end_of_traj,k]] = self.model.inov.detach().squeeze(-1)[~end_of_traj,:]
                     bw_dx[~end_of_traj,:,steps_to_smooth_map[~end_of_traj,k]] = self.model.dx.detach().squeeze(-1)[~end_of_traj,:]
@@ -580,13 +588,6 @@ class Pipeline_ERTS:
                     traj_batch[traj_id].bw_gain = bw_gain[traj_id,:,non_zero_ids_in_BW]
                     traj_batch[traj_id].bw_inov = bw_inov[traj_id,:,non_zero_ids_in_BW]
                     traj_batch[traj_id].bw_dx = bw_dx[traj_id,:,non_zero_ids_in_BW]
-
-                    #save new estimations for next runs
-                    if run_num == 0:
-                        traj_batch[traj_id].initial_state_estimation = [traj_batch[traj_id].x_estimated_BW[:,0].detach().squeeze()]
-                    else:
-                        traj_batch[traj_id].initial_state_estimation.append(traj_batch[traj_id].x_estimated_BW[:,0].detach().squeeze())
-
                 if "HEAD" in self.SYSTEM_MODE.value:
                     # self.head_pipeline.model.set_requires_grad(False)
                     MSE_batch_linear_LOSS = self.head_pipeline.get_one_epoch_loss(traj_batch)  +  self.config.lambda_loss * self.loss_fn(x_out_batch[est_BW_mask_loss], batch_target[FTT_BW_mask_loss])#MSE Loss Function
