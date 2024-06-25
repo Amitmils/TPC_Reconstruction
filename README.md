@@ -77,7 +77,7 @@ Each Dataset consists of a list of the class Trajectory found in [Tools/utils.py
 * **traj_length** - length of the trajetory
 * **x_estimated_FW** - SS vectors after FW pass
 * **x_estimated_BW** - SS vectors after BW pass
-* **BiRNN_output** - BiRNN's estimation of inital velocities. **IMPORTANT** BiRNN is optimized to give best energy estimation, the velocities arent gauranteed to be the best estimation
+* **BiRNN_output** - BiRNN's estimation of inital velocities. **IMPORTANT** BiRNN is optimized to give best energy estimation, the velocities arent guaranteed to be the best estimation
 * **init_energy** - init energy used to generate the traj
 * **init_teta** - init theta angle sued to generate the traj
 * **init_phi** - init phi used to generate traj
@@ -132,7 +132,7 @@ At the end of each run, the outputs will be saved to **path_results** under a fo
 * Plots & CSV with the errors and energy estimation in sub-dir 'results'
 * Log of the run named 'logger.log'
 * A copy of the config file for the specific run
-* dataset with updated smoothed SS for each trajectory and the BiRNN output, which outputs the initial velocity. To compute the energy from the velocity use get_energy_from_velocities function from [Tools/utils.py](Tools/utils.py). IMPORTANT - The net was trained to optimize energy estimation, therefore the velocities are not gauranteed to be the best estimation.
+* dataset with updated smoothed SS for each trajectory and the BiRNN output, which outputs the initial velocity. To compute the energy from the velocity use get_energy_from_velocities function from [Tools/utils.py](Tools/utils.py). IMPORTANT - The net was trained to optimize energy estimation, therefore the velocities are not guaranteed to be the best estimation.
 
 
 
