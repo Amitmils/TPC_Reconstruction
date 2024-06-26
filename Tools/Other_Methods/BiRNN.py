@@ -216,11 +216,11 @@ class BiRNNPipeLine():
         input_batch, input_lengths , target = self.parse_data(eval_set)
         outputs = self.model(input_batch, input_lengths).detach()
         loss = self.criterion(outputs, target)
-        self.pipeline_print(f"Loss : {10*torch.log10(loss)}")
+        # self.pipeline_print(f"BiRNN Loss : {10*torch.log10(loss)}")
         #add results to set
         for i in range(len(eval_set)):
             eval_set[i].BiRNN_output = outputs[i]
-        return 10*torch.log10(loss)
+        return loss
 
     def plot_data(self,eval_set,save_path,suffix=None):
         BiRNN_estimated_energy_error = list()
@@ -339,7 +339,7 @@ if __name__ == "__main__":
                 abs_avg , std = Pipeline.plot_data(test_set,save_path=graphs_save_path,suffix=f"{mode}_{run}") #plot_data_multiple_BiRNN
                 print(f"abs avg : {abs_avg} , std {std}")
                 results["Mode"].append(f"{mode}_{run}")
-                results["Loss"].append(loss.cpu().item())
+                results["Loss"].append((10*torch.log10(loss)).cpu().item())
                 results["Abs Avg"].append(abs_avg.cpu().item())
                 results["STD"].append(std.cpu().item())
 

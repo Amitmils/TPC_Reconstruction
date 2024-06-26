@@ -99,7 +99,7 @@ if system_config.train == True:
 saved_dir = RTSNet_Pipelines.NNEval(sys_model,test_set,load_RTS_model_path=system_config.RTS_model_path,load_BiRNN_model_path=system_config.BiRNN_model_path,set_name = "Test")
 
 
-torch.save([train_set,CV_set,test_set],saved_dir+'traj_outputs.pt')
+torch.save([train_set,CV_set,test_set],os.path.join(saved_dir,'traj_outputs.pt'))
 print(f"Run output saved to {saved_dir}")
 ####################################################################################
 
